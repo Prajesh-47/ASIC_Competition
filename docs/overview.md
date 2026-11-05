@@ -19,8 +19,9 @@ of die) at a 50 MHz target clock.
 
 ## The idea
 
-Most protocol emulators only act as one end of a conversation: they can *talk to* a device. SPLICE
-can do that too, but it can also sit **in the middle of a live connection between two chips**:
+Most protocol emulators only act as one end of a conversation: they can *talk to* a device. SPLICE's
+headline feature is different: it sits **in the middle of a live connection between two chips** and
+can alter the traffic as it passes. It can also talk to devices and record traffic on its own:
 
 ```
  Chip A  <---->  SPLICE  <---->  Chip B
@@ -114,5 +115,6 @@ compared are in [spec section 7.3](architecture.md#73-decision-two-macros-not-on
 | Weeks 5–8 | Line fabric, capture, then UART and I2C interposing | Observe and Interpose working |
 | Weeks 9–10 | Timing closure, final tests, documentation and demos | Submitted by Jan 18 |
 
-If time runs short, features get cut in this order: CRC instruction, then the I2C bridge, then capture
-depth. Verification and the week-4 valid entry are not cut.
+If time runs short, features get cut in this order: CRC instruction, then capture features and depth,
+and only as a last resort the I2C bridge. Verification, the week-4 valid entry and UART interposing
+are not cut, because interposing is what sets SPLICE apart.

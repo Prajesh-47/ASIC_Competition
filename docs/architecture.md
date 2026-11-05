@@ -7,7 +7,9 @@
 
 ## 1. Pitch (one paragraph for the judges)
 
-Every protocol emulator can *drive* a bus. SPLICE also sits **inline** on a live bus between two chips and can **watch, emulate, or alter** traffic in real time — all from firmware on a cycle-exact timing engine. One ISA gives you a bit-banging peripheral, a timestamped bus capture, and a man-in-the-middle / fault-injection tool for UART, SPI and I2C. That's exactly the hardware-debugging and reverse-engineering workflow the competition brief describes, in one chip.
+SPLICE sits **inline on a live bus between two chips** and alters traffic as it passes: flip one bit, drop a frame, or rewrite a byte, on an exact cycle, under firmware control, for UART, SPI and I2C. Bidirectional I2C pass-through comes from an open-drain bridge with formally proven release and no deadlock. Cycle-exact timing is what makes this possible rather than the goal in itself: a fault lands on the bit you chose, every time. The same engine also makes SPLICE an ordinary protocol emulator and a timestamped bus capture, so one chip covers talking to a device, watching it, and testing how it copes when the bus lies to it.
+
+> **Why this order (2026-11-05):** a keyword scan of 22 public entrants' READMEs found provable timing, on-chip logic analysers and protocol learning already in use, but no inline traffic alteration and no open-drain bridge. It is a README scan, so it can't rule out private work or unstated features. Lead with what appears to be unique.
 
 **Three modes, one engine:**
 
@@ -243,7 +245,7 @@ Host software (Python): assembler, loader, CLI (`splice load/run/capture/decode`
 | 9 | Jan 4–10 | Area/timing closure, GL sim, coverage | Freeze RTL |
 | 10 | Jan 11–18 | README, datasheet, demo writeups/video, submit | Submitted |
 
-**Cut lines if behind:** drop CRC op → drop ODB (keep I2C observe-only via plain inputs) → shrink capture. Never cut verification or the week-4 valid entry.
+**Cut lines if behind:** drop CRC op → shrink capture (pre-trigger and pattern-match start first, then the 512×16 macro to 256×16) → last resort, drop ODB (keep I2C observe-only via plain inputs). Never cut verification, the week-4 valid entry, or UART interposing, because interposing is what sets SPLICE apart.
 
 ## 12. Open questions / risks
 - [ ] SRAM macro availability & PDN on CMOS5L (week 1): flow precedent found, shuttle acceptance and our own harden still open (section 7.2)
