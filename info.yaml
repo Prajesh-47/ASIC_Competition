@@ -19,6 +19,9 @@ project:
   # Don't forget to also update `PROJECT_SOURCES` in test/Makefile.
   source_files:
     - "tt_um_prajesh47_splice.v"
+    - "splice_sram_selftest.v"
+    - "RM_IHPSG13_1P_256x16_c2_bm_bist.v"
+    - "RM_IHPSG13_1P_512x16_c2_bm_bist.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).

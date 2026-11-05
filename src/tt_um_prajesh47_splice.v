@@ -34,9 +34,78 @@ module tt_um_prajesh47_splice (
     else        hb_cnt <= hb_cnt + 24'd1;
   end
 
+  // SRAM harden experiment: both macros from docs/architecture.md section 7,
+  // exercised by a self-test. On this branch only, IRQ = test done and
+  // TRIG_OUT = test passed.
+  wire        prog_men, prog_wen, prog_ren;
+  wire        cap_men, cap_wen, cap_ren;
+  wire [7:0]  prog_addr;
+  wire [8:0]  cap_addr;
+  wire [15:0] prog_din, cap_din, prog_dout, cap_dout;
+  wire        test_done, test_pass;
+
+  splice_sram_selftest selftest (
+      .clk      (clk),
+      .rst_n    (rst_n),
+      .prog_men (prog_men),
+      .prog_wen (prog_wen),
+      .prog_ren (prog_ren),
+      .prog_dout(prog_dout),
+      .cap_men  (cap_men),
+      .cap_wen  (cap_wen),
+      .cap_ren  (cap_ren),
+      .cap_dout (cap_dout),
+      .prog_addr(prog_addr),
+      .prog_din (prog_din),
+      .cap_addr (cap_addr),
+      .cap_din  (cap_din),
+      .done     (test_done),
+      .pass     (test_pass)
+  );
+
+  RM_IHPSG13_1P_256x16_c2_bm_bist prog_sram (
+      .A_CLK      (clk),
+      .A_MEN      (prog_men),
+      .A_WEN      (prog_wen),
+      .A_REN      (prog_ren),
+      .A_ADDR     (prog_addr),
+      .A_DIN      (prog_din),
+      .A_DLY      (1'b1),
+      .A_DOUT     (prog_dout),
+      .A_BM       (16'hFFFF),
+      .A_BIST_CLK (1'b0),
+      .A_BIST_EN  (1'b0),
+      .A_BIST_MEN (1'b0),
+      .A_BIST_WEN (1'b0),
+      .A_BIST_REN (1'b0),
+      .A_BIST_ADDR(8'd0),
+      .A_BIST_DIN (16'd0),
+      .A_BIST_BM  (16'd0)
+  );
+
+  RM_IHPSG13_1P_512x16_c2_bm_bist cap_sram (
+      .A_CLK      (clk),
+      .A_MEN      (cap_men),
+      .A_WEN      (cap_wen),
+      .A_REN      (cap_ren),
+      .A_ADDR     (cap_addr),
+      .A_DIN      (cap_din),
+      .A_DLY      (1'b1),
+      .A_DOUT     (cap_dout),
+      .A_BM       (16'hFFFF),
+      .A_BIST_CLK (1'b0),
+      .A_BIST_EN  (1'b0),
+      .A_BIST_MEN (1'b0),
+      .A_BIST_WEN (1'b0),
+      .A_BIST_REN (1'b0),
+      .A_BIST_ADDR(9'd0),
+      .A_BIST_DIN (16'd0),
+      .A_BIST_BM  (16'd0)
+  );
+
   wire spi_miso = 1'b0;   // TODO: host SPI slave
-  wire irq      = 1'b0;   // TODO: engine/host event
-  wire trig_out = 1'b0;   // TODO: match/injection trigger
+  wire irq      = test_done;  // Branch only, see above. TODO: engine/host event
+  wire trig_out = test_pass;  // Branch only, see above. TODO: match/injection trigger
   wire active   = hb_cnt[23];
   wire [3:0] aux_out = 4'b0000;  // TODO: engine AUX_OUT
 

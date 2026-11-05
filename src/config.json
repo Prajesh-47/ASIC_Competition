@@ -31,6 +31,62 @@
   "//": "https://tinytapeout.com/faq/#how-can-i-map-an-additional-external-clock-to-one-of-the-gpios",
   "CLOCK_PORT": "clk",
 
+  "//": "SRAM experiment, see macro/README.md. Metal4 is the only PDN layer available to the project,",
+  "//": "so the macro cannot be strapped from above: Splice.PowerColumns turns the macro's supply",
+  "//": "columns into stripes instead. Macro spacing is set by the floorplan rule in macro/README.md.",
+  "meta": {
+    "flow": "Classic",
+    "substituting_steps": {
+      "+OpenROAD.GeneratePDN": "Splice.PowerColumns"
+    }
+  },
+  "MACROS": {
+    "RM_IHPSG13_1P_256x16_c2_bm_bist": {
+      "instances": {
+        "prog_sram": { "location": [377.76, 37.8], "orientation": "R0" }
+      },
+      "gds": ["dir::../macro/RM_IHPSG13_1P_256x16_c2_bm_bist/RM_IHPSG13_1P_256x16_c2_bm_bist.gds"],
+      "lef": ["dir::../macro/RM_IHPSG13_1P_256x16_c2_bm_bist/RM_IHPSG13_1P_256x16_c2_bm_bist.lef"],
+      "lib": {
+        "*_slow_*": ["dir::../macro/RM_IHPSG13_1P_256x16_c2_bm_bist/RM_IHPSG13_1P_256x16_c2_bm_bist_slow_1p08V_125C.lib"],
+        "*_fast_*": ["dir::../macro/RM_IHPSG13_1P_256x16_c2_bm_bist/RM_IHPSG13_1P_256x16_c2_bm_bist_fast_1p32V_m55C.lib"],
+        "*_typ_*": ["dir::../macro/RM_IHPSG13_1P_256x16_c2_bm_bist/RM_IHPSG13_1P_256x16_c2_bm_bist_typ_1p20V_25C.lib"]
+      },
+      "nl": ["dir::./RM_IHPSG13_1P_256x16_c2_bm_bist.v"],
+      "spice": ["dir::../macro/RM_IHPSG13_1P_256x16_c2_bm_bist/RM_IHPSG13_1P_256x16_c2_bm_bist.cdl"]
+    },
+    "RM_IHPSG13_1P_512x16_c2_bm_bist": {
+      "instances": {
+        "cap_sram": { "location": [678.24, 37.8], "orientation": "R0" }
+      },
+      "gds": ["dir::../macro/RM_IHPSG13_1P_512x16_c2_bm_bist/RM_IHPSG13_1P_512x16_c2_bm_bist.gds"],
+      "lef": ["dir::../macro/RM_IHPSG13_1P_512x16_c2_bm_bist/RM_IHPSG13_1P_512x16_c2_bm_bist.lef"],
+      "lib": {
+        "*_slow_*": ["dir::../macro/RM_IHPSG13_1P_512x16_c2_bm_bist/RM_IHPSG13_1P_512x16_c2_bm_bist_slow_1p08V_125C.lib"],
+        "*_fast_*": ["dir::../macro/RM_IHPSG13_1P_512x16_c2_bm_bist/RM_IHPSG13_1P_512x16_c2_bm_bist_fast_1p32V_m55C.lib"],
+        "*_typ_*": ["dir::../macro/RM_IHPSG13_1P_512x16_c2_bm_bist/RM_IHPSG13_1P_512x16_c2_bm_bist_typ_1p20V_25C.lib"]
+      },
+      "nl": ["dir::./RM_IHPSG13_1P_512x16_c2_bm_bist.v"],
+      "spice": ["dir::../macro/RM_IHPSG13_1P_512x16_c2_bm_bist/RM_IHPSG13_1P_512x16_c2_bm_bist.cdl"]
+    }
+  },
+  "PDN_MACRO_CONNECTIONS": [
+    "prog_sram VPWR VGND VDD! VSS!",
+    "prog_sram VPWR VGND VDDARRAY! VSS!",
+    "cap_sram VPWR VGND VDD! VSS!",
+    "cap_sram VPWR VGND VDDARRAY! VSS!"
+  ],
+  "PDN_CFG": "dir::pdn_cfg.tcl",
+  "PDN_VERTICAL_LAYER": "Metal4",
+  "PDN_HORIZONTAL_HALO": 0,
+  "PDN_VERTICAL_HALO": 0,
+  "ERROR_ON_PDN_VIOLATIONS": 0,
+  "ERROR_ON_ILLEGAL_OVERLAPS": 0,
+  "RUN_MAGIC_DRC": 0,
+  "MAGIC_MACRO_STD_CELL_SOURCE": "PDK",
+  "MAGIC_EXT_ABSTRACT_CELLS": ["RM_IHPSG13_.*"],
+  "MAGIC_DRC_USE_GDS": 0,
+
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
 
   "//": "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
@@ -39,7 +95,8 @@
 
   "//": "Save some time",
   "RUN_KLAYOUT_XOR": 0,
-  "RUN_KLAYOUT_DRC": 0,
+  "//": "KLayout DRC replaces Magic DRC for the SRAM experiment",
+  "RUN_KLAYOUT_DRC": 1,
 
   "//": "Don't put clock buffers on the outputs",
   "DESIGN_REPAIR_BUFFER_OUTPUT_PORTS": 0,
