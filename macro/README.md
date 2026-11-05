@@ -28,6 +28,11 @@ directory. `test/models/` holds the matching simulation models.
   of this makes the PDN generator add a partial strap, and `flow/splice_power_columns.py` then stops
   with an error.
 
+- **Design rule for the real engine:** give each macro its own registers placed close to it, and don't
+  run a shared bus between the macros. This cut slew violations at the macro pins from 46 to 9 and
+  capacitance violations from 10 to 6 (CI runs 42073457768 and 42076994258). Those 15 remaining
+  violations, mostly `prog_sram/A_ADDR` and `prog_sram/A_DOUT`, are still open.
+
 ## What was learned from other designs
 
 This code is our own, but other public entries showed what was needed, and those ideas are credited
