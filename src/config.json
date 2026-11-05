@@ -32,18 +32,18 @@
   "CLOCK_PORT": "clk",
 
   "//": "SRAM experiment, see macro/README.md. Metal4 is the only PDN layer available to the project,",
-  "//": "so the macro cannot be strapped from above: Project.ExtendPowerStripes moves the tile stripes",
-  "//": "onto the macro's supply columns instead.",
+  "//": "so the macro cannot be strapped from above: Splice.PowerColumns turns the macro's supply",
+  "//": "columns into stripes instead. Macros sit either side of the die centre, 60 um apart.",
   "meta": {
     "flow": "Classic",
     "substituting_steps": {
-      "+OpenROAD.GeneratePDN": "Project.ExtendPowerStripes"
+      "+OpenROAD.GeneratePDN": "Splice.PowerColumns"
     }
   },
   "MACROS": {
     "RM_IHPSG13_1P_256x16_c2_bm_bist": {
       "instances": {
-        "prog_sram": { "location": [42, 37.8], "orientation": "R0" }
+        "prog_sram": { "location": [377.76, 37.8], "orientation": "R0" }
       },
       "gds": ["dir::../macro/RM_IHPSG13_1P_256x16_c2_bm_bist/RM_IHPSG13_1P_256x16_c2_bm_bist.gds"],
       "lef": ["dir::../macro/RM_IHPSG13_1P_256x16_c2_bm_bist/RM_IHPSG13_1P_256x16_c2_bm_bist.lef"],
@@ -57,7 +57,7 @@
     },
     "RM_IHPSG13_1P_512x16_c2_bm_bist": {
       "instances": {
-        "cap_sram": { "location": [992, 37.8], "orientation": "R0" }
+        "cap_sram": { "location": [674.88, 37.8], "orientation": "R0" }
       },
       "gds": ["dir::../macro/RM_IHPSG13_1P_512x16_c2_bm_bist/RM_IHPSG13_1P_512x16_c2_bm_bist.gds"],
       "lef": ["dir::../macro/RM_IHPSG13_1P_512x16_c2_bm_bist/RM_IHPSG13_1P_512x16_c2_bm_bist.lef"],
