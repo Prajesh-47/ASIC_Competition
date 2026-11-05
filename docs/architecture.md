@@ -144,6 +144,49 @@ Sizes to sanity-check: UART TX ≈ 10–15 instr, UART RX ≈ 15, SPI master ≈
 - **Risk:** IHP SRAM macros expect specific power metals (Metal4/TopMetal1 reported); CMOS5L is a 5-metal variant — availability/integration unconfirmed. **Week-1 experiment.**
 - Fallback: latch/DFF RAM — ~128×16 program + 64×16 capture. Architecture must work at either size (address widths parameterised).
 
+> **Status (2026-11-05):** the target above is unchanged until the author approves a memory size. Sections 7.1–7.3 are week-1 findings and a proposal.
+
+### 7.1 Area probe (yosys 0.33, typ corner, synthesis only)
+Budget: the 6x4 die is 1289.28 × 710.64 µm = 916,214 µm² (`tile_sizes.yaml`). At the template's 60% density that is about 550,000 µm² of placeable cells, or about 23 µm² per cell at the 24K-cell guideline. Compare **area**, because memory cells are much larger than average.
+
+| Block | Cells | Mapped µm² | % of die | % of 550K |
+|---|---:|---:|---:|---:|
+| 4×16 registers | 186 | 4,841 | 0.5 | 0.9 |
+| Two 4×16 FIFOs | 478 | 11,863 | 1.3 | 2.2 |
+| 128×16 flop RAM, enable muxes | 7,859 | 170,256 | 18.6 | 31 |
+| 128×16 flop RAM, one ICG per word | 5,091 | 145,943 | 15.9 | 27 |
+| 128×16 latch RAM, one ICG per word | 3,081 | 95,075 | 10.4 | 17 |
+| 64×16 flop RAM, enable muxes | 4,046 | 86,549 | 9.4 | 16 |
+| 64×16 latch RAM, one ICG per word | 1,563 | 48,013 | 5.2 | 8.7 |
+
+Requested probe (registers + FIFOs + 128×16 RAM): flop 8,542 cells / 186,998 µm²; flop+ICG 5,743 / 162,596; latch 3,743 / 111,764.
+Full fallback (128×16 + 64×16 + registers + FIFOs, sum of blocks): latch 5,308 cells / 159,792 µm² (29% of 550K); flop 12,569 cells / 273,509 µm² (50% of 550K).
+
+Not included: CTS buffers, repair buffers, a second read port or arbitration. Flop counts include one tie cell per unreset flop (the lib has no reset-less flop; CI's stub netlist also shows one tie per flop). Not place-and-routed; latch RAM timing and CTS through 128 ICGs are unverified.
+
+Calibration: the same script on the stub gives 150 cells / 2,221 µm², against 146 / 2,185 µm² from CI's yosys 0.66. The stub has no RAM, so this does not validate the RAM mapping.
+
+### 7.2 SRAM on CMOS5L: evidence
+- **PDK:** `libs.ref/sg13cmos5l_sram` is a symlink to the SG13G2 macros at the revision CI pins (`2bbec755`). The CMOS5L stack is M1–M4 + TopMetal1. Macro pins and obstructions use M1–M4 only, with power on M4.
+- **Flow:** a public 6x4 CMOS5L project hardens three `1P_512x16` macros with gds, precheck and SDF gate-level jobs green. It relies on a custom PDN step and changes to the template's "do not change" settings.
+- **Shuttle:** no macro found on CMOS5L shuttle TTIHP 0.4. Macros are found on SG13G2 shuttles 26a and 26b.
+- **Silicon:** one user report of a `1024x8` test on SG13G2 (TTIHP 0.2). No CMOS5L silicon result found.
+- **Open:** acceptance for the CMOS5L shuttle, asked of the organisers.
+
+| Macro | Size (µm) | µm² | % of die | µm²/bit |
+|---|---|---:|---:|---:|
+| `1P_64x16_c2` | 236.8 × 64.36 | 15,240 | 1.7 | 14.9 |
+| `1P_256x16_c2_bm_bist` | 236.8 × 118.78 | 28,127 | 3.1 | 6.9 |
+| `1P_512x16_c2_bm_bist` | 236.8 × 191.34 | 45,309 | 4.9 | 5.5 |
+| `2P_256x16_c2_bm_bist` | 419.95 × 136.97 | 57,521 | 6.3 | 14.0 |
+| `2P_512x16_c2_bm_bist` | 402.61 × 219.77 | 88,482 | 9.7 | 10.8 |
+
+Macro halos and PDN keep-outs are not included. Latch RAM for comparison: about 46 µm²/bit including the read mux.
+`1P_512x16` `A_DOUT` clock-to-output, worst liberty table entry: 3.93 ns typ, 6.56 ns slow, leaving about 13 ns at the slow corner for decode and next-PC at 50 MHz.
+
+### 7.3 Proposal: two macros, not one unified macro
+A single-port macro cannot serve an instruction fetch and a capture write in the same cycle, so a unified memory conflicts with the fixed cycle counts in section 5. Separate macros remove the conflict: **program `1P_256x16` + capture `1P_512x16` = 73,436 µm² (8.0% of die)**. Keep address widths parameterised so the latch fallback (section 7.1) stays available.
+
 ## 8. Host interface (SPI slave, mode 0)
 Commands: `WR_MEM addr, n, data…` · `RD_MEM` · `WR_REG` · `RD_REG` · `START` · `STOP` · `STEP` · `STATUS` · `FIFO_RD/WR`.
 All host-domain signals cross into the core clock via synchronizers (SCK is ≤ core/4).
@@ -188,7 +231,8 @@ Host software (Python): assembler, loader, CLI (`splice load/run/capture/decode`
 **Cut lines if behind:** drop CRC op → drop ODB (keep I2C observe-only via plain inputs) → shrink capture. Never cut verification or the week-4 valid entry.
 
 ## 12. Open questions / risks
-- [ ] SRAM macro availability & PDN on CMOS5L (week 1)
+- [ ] SRAM macro availability & PDN on CMOS5L (week 1): flow precedent found, shuttle acceptance and our own harden still open (section 7.2)
+- [ ] Unified single-port memory conflicts with fixed cycle counts (section 7.3): needs a decision
 - [ ] Does 6x4 fit engine + fabric + capture? (synth early, week 1–3)
 - [ ] 8x4 approval from Jane Street (would relax area)
 - [ ] Exact pass-through latency through TT's pin mux (GL sim + reading TT mux docs)

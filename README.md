@@ -15,12 +15,14 @@ cycle-exact timing engine.
 | **Observe** | Transparent A↔B pass-through + timestamped edge capture |
 | **Interpose** | Engine switches each line's pass-through mux on an exact cycle: flip, drop or inject bits |
 
-Architecture spec: [`docs/architecture.md`](docs/architecture.md)
+Plain-language overview: [`docs/overview.md`](docs/overview.md) · Architecture spec: [`docs/architecture.md`](docs/architecture.md)
 
 ## Status
 
 Week 1: repo scaffolded from `TinyTapeout/ttihp-verilog-template@cmos5l`. Top is a stub
-(heartbeat + safe hi-Z reset state) that proves the RTL → GDS flow.
+(heartbeat + safe hi-Z reset state) that proves the RTL → GDS flow. Area probe and SRAM research
+are done; the memory size is awaiting a decision (`docs/architecture.md` section 7). No engine
+RTL yet.
 
 ## Repository layout
 
@@ -30,9 +32,12 @@ Week 1: repo scaffolded from `TinyTapeout/ttihp-verilog-template@cmos5l`. Top is
 | `test/` | cocotb tests (RTL and gate level) |
 | `docs/info.md` | Tiny Tapeout datasheet page |
 | `docs/architecture.md` | SPLICE architecture spec |
+| `docs/overview.md` | Plain-language summary of the project and its status |
+| `docs/ai-log.md` | What was AI-written and how it was independently checked |
 | `info.yaml` | TT project config (tiles, pinout, sources) |
-
-Planned: `model/` (Python golden model + assembler), `formal/` (SymbiYosys proofs), `host/` (CLI, sigrok export).
+| `model/` | Placeholder: Python golden model + assembler |
+| `formal/` | Placeholder: SymbiYosys proofs |
+| `host/` | Placeholder: CLI, sigrok export |
 
 ## Running tests locally
 
