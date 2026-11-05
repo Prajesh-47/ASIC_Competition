@@ -81,11 +81,8 @@
   "PDN_HORIZONTAL_HALO": 0,
   "PDN_VERTICAL_HALO": 0,
   "ERROR_ON_PDN_VIOLATIONS": 0,
-  "ERROR_ON_ILLEGAL_OVERLAPS": 0,
-  "RUN_MAGIC_DRC": 0,
   "MAGIC_MACRO_STD_CELL_SOURCE": "PDK",
   "MAGIC_EXT_ABSTRACT_CELLS": ["RM_IHPSG13_.*"],
-  "MAGIC_DRC_USE_GDS": 0,
 
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
 
