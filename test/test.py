@@ -44,7 +44,7 @@ async def test_lines_stay_hiz(dut):
         assert dut.uo_out.value == 0
 
 
-# SRAM self-test results on branch exp/two-sram-harden.
+# SRAM self-test results. Temporary, until the engine replaces the self-test.
 DONE = 0x02  # uo[1]
 PASS = 0x04  # uo[2]
 # 4 passes of 2N accesses over 256 and 512 words is 3072 cycles, plus overhead.

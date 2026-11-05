@@ -1,5 +1,5 @@
 /*
- * SPLICE: SRAM harden experiment (branch exp/two-sram-harden only)
+ * SPLICE: SRAM self-test (temporary, until the engine replaces it)
  * Copyright (c) 2026 Prajesh-47
  * SPDX-License-Identifier: Apache-2.0
  *

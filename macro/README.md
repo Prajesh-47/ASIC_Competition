@@ -1,6 +1,6 @@
 # macro/
 
-IHP SRAM macro views used by the SRAM harden experiment.
+IHP SRAM macro views used by SPLICE.
 
 | Macro | Use | Size (µm) |
 |---|---|---|

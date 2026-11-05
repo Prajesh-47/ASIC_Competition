@@ -71,7 +71,8 @@ they wrote and how each piece was checked independently.
 **Done in week 1**
 
 - The repo is set up from the Tiny Tapeout CMOS5L template. Only a placeholder design exists: a
-  heartbeat counter, with all bus lines safely released at reset.
+  heartbeat counter and a self-test of the two SRAM blocks, with all bus lines safely released at
+  reset.
 - The placeholder has been through the full chip-build flow at 6x4. Harden, gate-level test and Tiny
   Tapeout's precheck all passed, with 0 DRC and 0 LVS errors.
 - The GitHub Pages viewer job fails because Pages isn't enabled yet. This does not affect the chip.
@@ -83,10 +84,10 @@ instruction set approval below.
 
 ## Decisions
 
-**Memory (approved, pending a test build).** SPLICE will use two IHP SRAM blocks: 256x16 for the
+**Memory (approved and test-built).** SPLICE will use two IHP SRAM blocks: 256x16 for the
 program and 512x16 for capture, using about 8% of the die. Separate blocks mean an instruction fetch
-and a capture write can never collide, which keeps the design simple to prove. The test build
-hardens both blocks on a branch before anything depends on them.
+and a capture write can never collide, which keeps the design simple to prove. A test build with both
+blocks passes the full flow, including precheck and gate-level tests.
 
 The fallback is 128x16 + 64x16 built from standard latches. It fits, at about twice the area for a
 quarter of the storage, but 64 words of capture holds only a few bytes of SPI traffic. The options
@@ -96,9 +97,9 @@ compared are in [spec section 7.3](architecture.md#73-decision-two-macros-not-on
 
 ## What is still uncertain
 
-- **SRAM acceptance:** no SRAM has been found on a past CMOS5L shuttle, though a public 6x4 CMOS5L
-  design with these blocks does pass the flow's checks. We still need to ask the organisers, and to
-  build one ourselves.
+- **SRAM acceptance:** assumed, not confirmed. Jane Street's post recommends SRAM for instruction
+  memory, and our test build passes the flow's checks, but no SRAM has been found on a past CMOS5L
+  shuttle. If it is refused, the latch fallback above applies.
 - **SRAM on real chips:** the only silicon report we found is from the related SG13G2 process, not
   CMOS5L.
 - **Area figures:** these are synthesis estimates from an older local tool version. The method landed

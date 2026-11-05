@@ -31,7 +31,7 @@
   "//": "https://tinytapeout.com/faq/#how-can-i-map-an-additional-external-clock-to-one-of-the-gpios",
   "CLOCK_PORT": "clk",
 
-  "//": "SRAM experiment, see macro/README.md. Metal4 is the only PDN layer available to the project,",
+  "//": "SRAM macros, see macro/README.md. Metal4 is the only PDN layer available to the project,",
   "//": "so the macro cannot be strapped from above: Splice.PowerColumns turns the macro's supply",
   "//": "columns into stripes instead. Macro spacing is set by the floorplan rule in macro/README.md.",
   "meta": {
@@ -95,7 +95,7 @@
 
   "//": "Save some time",
   "RUN_KLAYOUT_XOR": 0,
-  "//": "KLayout DRC replaces Magic DRC for the SRAM experiment",
+  "//": "KLayout DRC replaces Magic DRC, see macro/README.md",
   "RUN_KLAYOUT_DRC": 1,
 
   "//": "Don't put clock buffers on the outputs",

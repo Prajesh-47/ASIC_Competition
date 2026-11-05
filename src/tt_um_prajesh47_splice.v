@@ -3,7 +3,7 @@
  * Copyright (c) 2026 Prajesh-47
  * SPDX-License-Identifier: Apache-2.0
  *
- * Top level. Week-1 stub: proves the RTL -> GDS flow on IHP CMOS5L.
+ * Top level. Stub: proves the RTL -> GDS flow on IHP CMOS5L, with both SRAM macros.
  * Pin functions follow docs/architecture.md section 3.
  *
  *   ui[0] SPI SCK   ui[1] SPI MOSI   ui[2] SPI CS_n   ui[3] TRIG_IN
@@ -34,8 +34,8 @@ module tt_um_prajesh47_splice (
     else        hb_cnt <= hb_cnt + 24'd1;
   end
 
-  // SRAM harden experiment: both macros from docs/architecture.md section 7,
-  // exercised by a self-test. On this branch only, IRQ = test done and
+  // SRAM macros: both macros from docs/architecture.md section 7,
+  // exercised by a self-test. Until the engine lands, IRQ = test done and
   // TRIG_OUT = test passed.
   wire        prog_men, prog_wen, prog_ren;
   wire        cap_men, cap_wen, cap_ren;
@@ -104,8 +104,8 @@ module tt_um_prajesh47_splice (
   );
 
   wire spi_miso = 1'b0;   // TODO: host SPI slave
-  wire irq      = test_done;  // Branch only, see above. TODO: engine/host event
-  wire trig_out = test_pass;  // Branch only, see above. TODO: match/injection trigger
+  wire irq      = test_done;  // Self-test, see above. TODO: engine/host event
+  wire trig_out = test_pass;  // Self-test, see above. TODO: match/injection trigger
   wire active   = hb_cnt[23];
   wire [3:0] aux_out = 4'b0000;  // TODO: engine AUX_OUT
 

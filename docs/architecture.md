@@ -144,8 +144,8 @@ Sizes to sanity-check: UART TX ≈ 10–15 instr, UART RX ≈ 15, SPI master ≈
 - Host reads capture over SPI; host tool converts to **sigrok/PulseView** format so users get protocol decoders for free.
 
 ## 7. Memory
-- **Decision (approved 2026-11-05, pending a harden of both macros on a branch):** two separate single-port SRAM macros: `RM_IHPSG13_1P_256x16` for program and `RM_IHPSG13_1P_512x16` for capture. See section 7.3.
-- **Risk:** shuttle acceptance is unconfirmed, and no CMOS5L silicon result was found (section 7.2).
+- **Decision (approved and hardened 2026-11-05):** two separate single-port SRAM macros: `RM_IHPSG13_1P_256x16` for program and `RM_IHPSG13_1P_512x16` for capture. See section 7.3.
+- **Assumption:** macros are accepted on the CMOS5L shuttle. The organisers have not been asked; the author chose to proceed on the evidence in section 7.2. No CMOS5L silicon result was found.
 - Fallback: latch RAM — 128×16 program + 64×16 capture. Architecture must work at either size (address widths parameterised).
 
 ### 7.1 Area probe (yosys 0.33, typ corner, synthesis only)
@@ -173,7 +173,8 @@ Calibration: the same script on the stub gives 150 cells / 2,221 µm², against 
 - **Flow:** a public 6x4 CMOS5L project hardens three `1P_512x16` macros with gds, precheck and SDF gate-level jobs green. It relies on a custom PDN step and changes to the template's "do not change" settings.
 - **Shuttle:** no macro found on CMOS5L shuttle TTIHP 0.4. Macros are found on SG13G2 shuttles 26a and 26b.
 - **Silicon:** one user report of a `1024x8` test on SG13G2 (TTIHP 0.2). No CMOS5L silicon result found.
-- **Open:** acceptance for the CMOS5L shuttle, asked of the organisers.
+- **Our harden:** both macros pass gds, precheck and gate-level tests with our own power step (CI run 42076994258, stub plus self-test). See `macro/README.md`, including 15 slew and capacitance violations at macro pins still to clear.
+- **Acceptance:** assumed, not confirmed. The competition post recommends SRAM for instruction memory and links a macro example, though that example is on SG13G2.
 
 | Macro | Size (µm) | µm² | % of die | µm²/bit |
 |---|---|---:|---:|---:|
@@ -248,7 +249,9 @@ Host software (Python): assembler, loader, CLI (`splice load/run/capture/decode`
 **Cut lines if behind:** drop CRC op → shrink capture (pre-trigger and pattern-match start first, then the 512×16 macro to 256×16) → last resort, drop ODB (keep I2C observe-only via plain inputs). Never cut verification, the week-4 valid entry, or UART interposing, because interposing is what sets SPLICE apart.
 
 ## 12. Open questions / risks
-- [ ] SRAM macro availability & PDN on CMOS5L (week 1): flow precedent found, shuttle acceptance and our own harden still open (section 7.2)
+- [x] SRAM macro integration on CMOS5L: hardened (section 7.2)
+- [ ] Macro acceptance on the CMOS5L shuttle: assumed, not confirmed
+- [ ] Slew and capacitance violations at macro pins: clear in the real design (`macro/README.md`)
 - [x] Unified single-port memory conflicts with fixed cycle counts: resolved with two macros (section 7.3)
 - [ ] Does 6x4 fit engine + fabric + capture? (synth early, week 1–3)
 - [ ] 8x4 approval from Jane Street (would relax area)
