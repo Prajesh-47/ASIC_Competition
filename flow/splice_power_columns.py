@@ -63,6 +63,13 @@ def rewire_net(block, tech, net_name, macros, keepouts):
     ylo = min(b.yMin() for b in stripes)
     yhi = max(b.yMax() for b in stripes)
 
+    # The PDN generator adds short straps in the channel between macros. Precheck
+    # requires every power port to reach the top and bottom of the tile, and the
+    # full-height stripes beside them already reach those rows, so remove them.
+    keepouts = keepouts + [
+        (b.xMin(), b.xMax()) for b in stripes if b.yMax() - b.yMin() < yhi - ylo
+    ]
+
     def in_keepout(box):
         return any(box.xMax() > x0 and box.xMin() < x1 for x0, x1 in keepouts)
 

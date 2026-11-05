@@ -37,6 +37,16 @@ here:
 
 ## Checks turned off
 
-`src/config.json` sets `ERROR_ON_PDN_VIOLATIONS` to 0 because the flow's power check runs inside
-`GeneratePDN`, before the macro columns exist. A green run therefore does not show the power grid
-is connected: read the later IR-drop step's report.
+A green run doesn't show these checks passed, so each one is justified here. Evidence is from CI runs
+42045714767 (baseline) and 42050382525 (`exp/own-power-strict`, with Magic DRC and the overlap error
+back on).
+
+| Setting | Why it's off | Evidence |
+|---|---|---|
+| `ERROR_ON_PDN_VIOLATIONS` = 0 | The flow's power check runs inside `GeneratePDN`, before the macro columns exist | The later IR-drop step reports all shapes connected on VPWR and VGND. Read that report: the final `design__power_grid_violation__count` metric is stale |
+| `ERROR_ON_ILLEGAL_OVERLAPS` = 0 | Magic reports stripes crossing M4 obstructions in the macro's LEF | All are in one band on the VDD columns (macro y ≈ 39–45 µm). `flow/check_macro_columns.py` shows the real GDS has no conflicting Metal4 on any of the 40 columns of either macro |
+| `RUN_MAGIC_DRC` = 0, KLayout DRC on | Magic doesn't apply the rule exceptions in the macro's layout | All 87,223 errors are inside the macro footprints, 0 outside. KLayout DRC, which precheck also runs, reports 0 |
+
+Bridging `VDD!` and `VDDARRAY!` with one stripe ties them to the same supply. Every design found so
+far does this, but no IHP document confirming it was found. **Open:** LVS treats the macro as a black
+box, so only the GDS check above covers shorts inside the macro's footprint.
