@@ -1,0 +1,36 @@
+idea,source,evidence,result,verdict,notes
+Spec draft ISA (V0),architecture.md section 5,measured,Works except full-duplex SPI as written; UART TX 14 words,Baseline,Spec estimate for I2C (60-80 words) was high: measured 36
+RP2040 PIO style: divider and side-set and short delay (V1),RP2040 datasheet,measured,UART TX 6 words; timing limited to whole divider multiples (432 not 434),Take the ideas not the divider,Our firmware is an adaptation and not Raspberry Pi's
+Deadline timer alone (V2),PRET and FlexPRET,measured,Programs longer than the spec: UART TX 17 vs 14,Not on its own,Weft and Tarang already use timed instructions
+Fused OUTB and INB (V3),PIO jmp x-- and own trace mining,measured,22-43% smaller on most workloads; UART rewrite min bit 13 to 4,Adopt,Trace pairs OUT+DLY and DLY+JMP confirm this is the hot path
+Tick qualifier on instructions (V3),Own,measured,Removes separate WAITT and delay words,Adopt,Costs a bit in each format
+Bit timer period 13 bits,Own,measured by encoding,Minimum about 6.1 kbaud at 50 MHz from an immediate,Adopt,Lower rates need the period from a register (not built)
+Tick from an input edge (TSRC),Own,measured,Inline SPI 21 to 15 words; no speed gain; about 1K um2,Adopt,Limit is the synchronizer round trip and not the engine
+Hardware pulse rules (V4),Reactive processors and XMOS events,measured,Dual flip 11 words and exact to bit 4; single flip +1 word; about 17K um2,Reserve encoding,Needs a holdoff register or it re-triggers mid frame
+Hardware byte match rules (V7),RMT match-action,measured,Match then flip both ways 11 words vs 34; about 30K um2,Stretch,Only tested on UART framing
+Two contexts barrel (V5),PRET thread interleaving and XMOS,measured,Dual flip exact 16 words; bidirectional rewrite min bit 6; +8.5K um2,Adopt,Needs per-context edge memory
+Two independent engines (V6),TD-uT and others,measured for speed and estimated for area,Bidirectional rewrite min bit 4; about 73K um2 with a second macro,Reject,Gain is not needed at 8.3 Mbaud
+Single context polling both directions,Own,measured,Correct bytes but edges move; 40 words; bit 30 or more,Reject,Shows why a second context is needed
+One flop on the PASS path,Own,measured in model only,SPI inline 4.17 to 6.25 MHz; 60 to 40 ns; flip gets 1 cycle skew,User decision,Metastability risk not measurable here
+Two-line atomic MODE,Own,measured for area only,0.5K um2; no workload needed it,Leave out,Revisit if I2C interposing needs it
+XOR overlay in the fabric,Own,reasoned plus workload,Rewrite works by switching source mid start bit,Reject,Simpler mechanism already exists
+RAND LFSR instruction,PIO-free fuzzing idea,measured,Fuzz step 29 to 21 words,Adopt,Sequence checked against an independent reference LFSR
+No-shift OUT,Found by SPI failure,measured,Fixes full duplex for one encoding bit,Adopt,PIO uses a second 16-bit register instead
+Blocking PULLW with bit count,PIO autopull,measured,Saves 2-3 words per program,Adopt,Reverses earlier advice; stalls only in idle
+Tomasulo out-of-order,Requested,measured,At most 2.8% in ideal limit; storage alone 19.3K um2,Reject,Also risks timing anomalies
+Superscalar or VLIW,Own,reasoned,Pin ops are serial by nature; dataflow limit shows no parallelism to use,Reject,Side-set captures the one useful case
+Deep pipeline,Own,reasoned,Adds hazards and breaks exact cycle counts; timing already meets 50 MHz in sketch,Reject,
+Branch prediction or cache,PRET,reasoned,No misses or mispredicts today so nothing to gain and determinism to lose,Reject,
+Transport-triggered architecture,Corporaal (from memory),not tested,Might shrink decode; area is not the constraint,Not pursued,Source not checked
+Stack machine,Own,not tested,Denser code possible; bit loops are not stack shaped,Not pursued,
+Bit-serial core (SERV style),From memory,not tested,Saves area which is not the constraint; costs cycles,Reject,Source not checked
+32-bit instruction word,Tarang,reasoned,Doubles memory for fields that fused 16-bit already covers,Reject,Would need a second macro
+Four contexts,Escapement,not tested,Rate falls to 1/4; no workload needs more than two,Not pursued,Could revisit for SPI interposing with four lines
+Deadline-miss flag,PRET and FlexPRET exceptions,built in sim,Missed tick sets F,Adopt,Not exercised by a dedicated test
+Timestamp on WAIT,XMOS,built in sim,Field in encoding; no workload used it,Decide with capture unit,
+Stripe alignment for macro power,Own,measured,Regular pitch cannot reach centre band,Rejected earlier,Different topic; kept for the record
+Spec bug: IN and OUT share SR,Found by test,measured,SPI full duplex fails on spec v0,Fix in v1,
+Spec gap: frame holdoff,Found by test,measured,Flip re-triggers on data edges,Fix in firmware and rules,
+Rule: set value before MODE,Found by test,measured,SCK glitch at startup otherwise,Firmware rule,Reset value of eng registers should also be decided
+Harness error: SPI startup edge,Found by decoder mismatch,measured,Gave a false pass at high speed,Fixed,Why the negative controls exist
+Analysis error: idle polling counted as OoO gain,Found by review,measured,Showed false 1.5x speedup,Fixed,Trace now limited to real work
