@@ -48,11 +48,11 @@ def supply_columns(inst, pin_names):
     return sorted(columns)
 
 
-def rewire_net(block, net_name, macros, keepouts):
+def rewire_net(block, tech, net_name, macros, keepouts):
     net = block.findNet(net_name)
     swire = net.getSWires()[0]
     bpin = net.getBTerms()[0].getBPins()[0]
-    layer = block.getDb().getTech().findLayer(LAYER)
+    layer = tech.findLayer(LAYER)
 
     wires = list(swire.getWires())
     stripes = [b for b in wires if on_layer(b) and b.yMax() - b.yMin() > b.xMax() - b.xMin()]
@@ -110,7 +110,7 @@ def power_columns(reader):
     margin = int(CLEARANCE_UM * block.getDefUnits())
     keepouts = [(i.getBBox().xMin() - margin, i.getBBox().xMax() + margin) for i in macros]
     for net_name in SUPPLY_PINS:
-        rewire_net(block, net_name, macros, keepouts)
+        rewire_net(block, reader.tech, net_name, macros, keepouts)
 
 
 if __name__ == "__main__":
