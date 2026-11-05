@@ -22,6 +22,12 @@ directory. `test/models/` holds the matching simulation models.
 - **Tie-offs:** `A_DLY` is tied high (the model halts simulation otherwise), `A_BM` is all ones, and
   the BIST inputs are tied low.
 
+- **Floorplan rule:** rows stop 10 µm short of a macro, so the rows in the channel between the two
+  macros must still reach a stripe of each supply. With the program macro at x=377.76, the capture
+  macro at x=678.24 makes those rows end at x=668.24, past the VGND stripe at 666.98. Moving it left
+  of this makes the PDN generator add a partial strap, and `flow/splice_power_columns.py` then stops
+  with an error.
+
 ## What was learned from other designs
 
 This code is our own, but other public entries showed what was needed, and those ideas are credited
@@ -45,7 +51,7 @@ back on).
 |---|---|---|
 | `ERROR_ON_PDN_VIOLATIONS` = 0 | The flow's power check runs inside `GeneratePDN`, before the macro columns exist | The later IR-drop step reports all shapes connected on VPWR and VGND. Read that report: the final `design__power_grid_violation__count` metric is stale |
 | `ERROR_ON_ILLEGAL_OVERLAPS` = 0 | Magic reports stripes crossing M4 obstructions in the macro's LEF | All are in one band on the VDD columns (macro y ≈ 39–45 µm). `flow/check_macro_columns.py` shows the real GDS has no conflicting Metal4 on any of the 40 columns of either macro |
-| `RUN_MAGIC_DRC` = 0, KLayout DRC on | Magic doesn't apply the rule exceptions in the macro's layout | All 87,223 errors are inside the macro footprints, 0 outside. KLayout DRC, which precheck also runs, reports 0 |
+| `RUN_MAGIC_DRC` = 0, KLayout DRC on | Magic flags the foundry macro's internals. The cause wasn't investigated further | All 87,223 errors are inside the macro footprints, 0 outside. KLayout DRC, which precheck also runs, reports 0 |
 
 Bridging `VDD!` and `VDDARRAY!` with one stripe ties them to the same supply. Every design found so
 far does this, but no IHP document confirming it was found. **Open:** LVS treats the macro as a black

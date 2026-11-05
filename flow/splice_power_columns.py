@@ -63,15 +63,18 @@ def rewire_net(block, tech, net_name, macros, keepouts):
     ylo = min(b.yMin() for b in stripes)
     yhi = max(b.yMax() for b in stripes)
 
-    # The PDN generator adds short straps in the channel between macros. Precheck
-    # requires every power port to reach the top and bottom of the tile, and the
-    # full-height stripes beside them already reach those rows, so remove them.
-    keepouts = keepouts + [
-        (b.xMin(), b.xMax()) for b in stripes if b.yMax() - b.yMin() < yhi - ylo
-    ]
-
     def in_keepout(box):
         return any(box.xMax() > x0 and box.xMin() < x1 for x0, x1 in keepouts)
+
+    # The PDN generator adds a short strap to a channel between macros when the
+    # channel's rows reach no stripe of this net. Precheck rejects such a port, and
+    # the rows depend on it, so the floorplan has to give those rows both supplies.
+    for box in stripes:
+        if box.yMax() - box.yMin() < yhi - ylo and not in_keepout(box):
+            raise click.ClickException(
+                f"{net_name}: partial stripe at x={box.xMin() / block.getDefUnits()} um. "
+                "Move the macros so the rows between them reach a stripe of this net."
+            )
 
     removed = 0
     for box in wires:
