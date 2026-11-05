@@ -16,8 +16,9 @@ export to sigrok/PulseView.
 
 Full architecture: see `docs/architecture.md` in the project repository.
 
-> Status: week-1 stub. Outputs are tied low, all bus lines are hi-Z, and `uo[3]` blinks a
-> ~3 Hz heartbeat at 50 MHz.
+> Status: SRAM harden experiment. All bus lines are hi-Z and `uo[3]` blinks a ~3 Hz heartbeat at
+> 50 MHz. A self-test runs on two SRAM macros after reset: `uo[1]` goes high when it is done and
+> `uo[2]` goes high if it passed. Other outputs are tied low.
 
 ## How to test
 
