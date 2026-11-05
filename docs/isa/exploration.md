@@ -28,7 +28,7 @@ The study changed what I think the problem is:
 |---|---|---|---:|---|
 | V0 | Spec draft | Nothing | 14,872 | Polling only: not exact, 40 words, bit period ≥ 30 |
 | A | Loom | Fused bit ops, tick qualifier, bit timer, tick source, no-shift `OUT`, side-set, `RAND` | 22,486 | Same as V0 |
-| **B** | **Loom-2** | A plus two contexts | **30,998** | **Exact at 115,200 baud: 16 words for flips, 40 for rewriting** |
+| **B** | **Loom-2** | A plus two contexts | **30,998** | **Flips exact at 115,200 baud in 16 words; rewriting decodes correctly in 40** |
 | C | Loom-2 + match rules | B plus hardware byte matchers | About 61,000 (B plus the match delta, not synthesized together) | 11 words, with no engine involved |
 | D | Two separate engines | A twice, plus a second program macro | About 73,000 (estimated, includes 28,127 for the macro) | Rewriting works down to a bit period of 4 |
 
@@ -134,7 +134,7 @@ The same traces also answer what to fuse: the most frequent executed pairs are `
 | Idea | Source | Result | Verdict |
 |---|---|---|---|
 | Tick from an input edge (`TSRC`) | Mine | 29% less code on inline SPI, **no speed gain**, 1.6K µm² or less | Keep, for code size and for following external clocks |
-| Stripe-free hardware match rules | RMT match-action | 11 words vs 34, engine-free, about 30K µm² | Stretch; unproven beyond UART |
+| Hardware match rules | RMT match-action | 11 words vs 34, engine-free, about 30K µm² | Stretch; unproven beyond UART |
 | One flop on the PASS path | Mine | Inline SPI 4.17 → 6.25 MHz, pin to pin 60 → 40 ns, flip gets 1 cycle of skew | **Your decision**, see below |
 | Deadline timer alone | PRET, FlexPRET | Longer programs than the spec | Not on its own; useful with fusing |
 | Two-line atomic `MODE` | Mine | 0.5K µm², no workload needed it | Leave out until one does |
