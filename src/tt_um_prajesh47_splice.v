@@ -39,8 +39,9 @@ module tt_um_prajesh47_splice (
   // TRIG_OUT = test passed.
   wire        prog_men, prog_wen, prog_ren;
   wire        cap_men, cap_wen, cap_ren;
-  wire [8:0]  mem_addr;
-  wire [15:0] mem_din, prog_dout, cap_dout;
+  wire [7:0]  prog_addr;
+  wire [8:0]  cap_addr;
+  wire [15:0] prog_din, cap_din, prog_dout, cap_dout;
   wire        test_done, test_pass;
 
   splice_sram_selftest selftest (
@@ -54,8 +55,10 @@ module tt_um_prajesh47_splice (
       .cap_wen  (cap_wen),
       .cap_ren  (cap_ren),
       .cap_dout (cap_dout),
-      .addr     (mem_addr),
-      .din      (mem_din),
+      .prog_addr(prog_addr),
+      .prog_din (prog_din),
+      .cap_addr (cap_addr),
+      .cap_din  (cap_din),
       .done     (test_done),
       .pass     (test_pass)
   );
@@ -65,8 +68,8 @@ module tt_um_prajesh47_splice (
       .A_MEN      (prog_men),
       .A_WEN      (prog_wen),
       .A_REN      (prog_ren),
-      .A_ADDR     (mem_addr[7:0]),
-      .A_DIN      (mem_din),
+      .A_ADDR     (prog_addr),
+      .A_DIN      (prog_din),
       .A_DLY      (1'b1),
       .A_DOUT     (prog_dout),
       .A_BM       (16'hFFFF),
@@ -85,8 +88,8 @@ module tt_um_prajesh47_splice (
       .A_MEN      (cap_men),
       .A_WEN      (cap_wen),
       .A_REN      (cap_ren),
-      .A_ADDR     (mem_addr),
-      .A_DIN      (mem_din),
+      .A_ADDR     (cap_addr),
+      .A_DIN      (cap_din),
       .A_DLY      (1'b1),
       .A_DOUT     (cap_dout),
       .A_BM       (16'hFFFF),

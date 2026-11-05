@@ -28,8 +28,12 @@ module splice_sram_selftest (
     output reg         cap_ren,
     input  wire [15:0] cap_dout,
 
-    output reg  [8:0]  addr,
-    output reg  [15:0] din,
+    // Each macro has its own address and data registers, loaded only when it is
+    // selected, so no long wire runs between the macros.
+    output reg  [7:0]  prog_addr,
+    output reg  [15:0] prog_din,
+    output reg  [8:0]  cap_addr,
+    output reg  [15:0] cap_din,
 
     output reg         done,
     output reg         pass
@@ -67,8 +71,10 @@ module splice_sram_selftest (
       ren_q    <= 1'b0;
       addr_q   <= 9'd0;
       fail     <= 1'b0;
-      addr     <= 9'd0;
-      din      <= 16'd0;
+      prog_addr <= 8'd0;
+      prog_din  <= 16'd0;
+      cap_addr  <= 9'd0;
+      cap_din   <= 16'd0;
       prog_men <= 1'b0;
       prog_wen <= 1'b0;
       prog_ren <= 1'b0;
@@ -79,7 +85,7 @@ module splice_sram_selftest (
       pass     <= 1'b0;
     end else begin
       ren_q  <= prog_ren | cap_ren;
-      addr_q <= addr;
+      addr_q <= sel ? cap_addr : {1'b0, prog_addr};
 
       // Written as if/else so an X on the read data counts as a failure.
       // `if (dout != expected) fail` would treat X as a pass.
@@ -94,8 +100,13 @@ module splice_sram_selftest (
           cap_men  <= sel;
           prog_wen <= !sel;
           cap_wen  <= sel;
-          addr     <= cnt;
-          din      <= pattern(cnt, inv);
+          if (sel) begin
+            cap_addr <= cnt;
+            cap_din  <= pattern(cnt, inv);
+          end else begin
+            prog_addr <= cnt[7:0];
+            prog_din  <= pattern(cnt, inv);
+          end
           if (cnt == last) begin
             cnt   <= 9'd0;
             state <= S_READ;
@@ -109,7 +120,8 @@ module splice_sram_selftest (
           cap_wen  <= 1'b0;
           prog_ren <= !sel;
           cap_ren  <= sel;
-          addr     <= cnt;
+          if (sel) cap_addr  <= cnt;
+          else     prog_addr <= cnt[7:0];
           if (cnt == last) begin
             cnt   <= 9'd0;
             state <= S_DRAIN;
