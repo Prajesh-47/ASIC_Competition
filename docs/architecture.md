@@ -28,10 +28,12 @@ Every protocol emulator can *drive* a bus. SPLICE also sits **inline** on a live
                  │
                  ▼
         ┌────────────────────┐     ┌──────────────┐
-        │  Timing engine     │◄───►│ Unified SRAM │  program + capture
-        │  (16-bit ISA,      │     │  (512x16 tgt)│
-        │   cycle-exact)     │     └──────▲───────┘
-        └──┬───────────┬─────┘            │
+        │  Timing engine     │◄───►│ Program SRAM │  256x16
+        │  (16-bit ISA,      │     └──────────────┘
+        │   cycle-exact)     │     ┌──────────────┐
+        └──┬───────────┬─────┘     │ Capture SRAM │  512x16
+           │           │           └──────▲───────┘
+           │           │                  │
    ENG_OUT │     MODE  │            ┌─────┴──────┐
            ▼           ▼            │ Capture    │◄── synced line states
         ┌──────────────────────┐    │ unit (Δt)  │
@@ -140,11 +142,9 @@ Sizes to sanity-check: UART TX ≈ 10–15 instr, UART RX ≈ 15, SPI master ≈
 - Host reads capture over SPI; host tool converts to **sigrok/PulseView** format so users get protocol decoders for free.
 
 ## 7. Memory
-- Target: one **512×16** SRAM macro shared — e.g. 256 words program + 256 words capture (split register).
-- **Risk:** IHP SRAM macros expect specific power metals (Metal4/TopMetal1 reported); CMOS5L is a 5-metal variant — availability/integration unconfirmed. **Week-1 experiment.**
-- Fallback: latch/DFF RAM — ~128×16 program + 64×16 capture. Architecture must work at either size (address widths parameterised).
-
-> **Status (2026-11-05):** the target above is unchanged until the author approves a memory size. Sections 7.1–7.3 are week-1 findings and a proposal.
+- **Decision (approved 2026-11-05, pending a harden of both macros on a branch):** two separate single-port SRAM macros: `RM_IHPSG13_1P_256x16` for program and `RM_IHPSG13_1P_512x16` for capture. See section 7.3.
+- **Risk:** shuttle acceptance is unconfirmed, and no CMOS5L silicon result was found (section 7.2).
+- Fallback: latch RAM — 128×16 program + 64×16 capture. Architecture must work at either size (address widths parameterised).
 
 ### 7.1 Area probe (yosys 0.33, typ corner, synthesis only)
 Budget: the 6x4 die is 1289.28 × 710.64 µm = 916,214 µm² (`tile_sizes.yaml`). At the template's 60% density that is about 550,000 µm² of placeable cells, or about 23 µm² per cell at the 24K-cell guideline. Compare **area**, because memory cells are much larger than average.
@@ -184,8 +184,23 @@ Calibration: the same script on the stub gives 150 cells / 2,221 µm², against 
 Macro halos and PDN keep-outs are not included. Latch RAM for comparison: about 46 µm²/bit including the read mux.
 `1P_512x16` `A_DOUT` clock-to-output, worst liberty table entry: 3.93 ns typ, 6.56 ns slow, leaving about 13 ns at the slow corner for decode and next-PC at 50 MHz.
 
-### 7.3 Proposal: two macros, not one unified macro
-A single-port macro cannot serve an instruction fetch and a capture write in the same cycle, so a unified memory conflicts with the fixed cycle counts in section 5. Separate macros remove the conflict: **program `1P_256x16` + capture `1P_512x16` = 73,436 µm² (8.0% of die)**. Keep address widths parameterised so the latch fallback (section 7.1) stays available.
+### 7.3 Decision: two macros, not one unified macro
+A single-port macro cannot serve an instruction fetch and a capture write in the same cycle. Separate macros mean the two never collide: **program `1P_256x16` + capture `1P_512x16` = 73,436 µm² (8.0% of die)**. Keep address widths parameterised so the alternatives stay available.
+
+Options considered (memory area only, before halos):
+
+| Option | µm² | Words (program/capture) | Outcome |
+|---|---:|---|---|
+| Two macros, 256 + 512 | 73,436 | 256/512 | **Chosen** |
+| Two macros, 512 + 512 | 90,618 | 512/512 | Backup if firmware outgrows 256 words |
+| Two macros, 256 + 256 | 56,254 | 256/256 | Only if area gets tight |
+| One 1-port 512, fetch has priority, small capture buffer | ~51,000 | 512 shared | Runner-up: engine timing stays exact, but capture can overflow in tight loops and needs more proofs |
+| One 2-port 512 | 88,482 | 512 shared | Rejected: more area than the chosen option for fewer words |
+| Latch RAM | 143,088 | 128/64 | Fallback if macros are refused or cannot be hardened |
+| Flop RAM | 256,805 | 128/64 | Rejected: area |
+| External memory chip | small | large | Rejected: breaks exact timing, no spare pins, adds a required external part |
+
+**Reverse the decision if:** macros are not accepted or the harden cannot be made to pass (latch fallback); firmware does not fit in 256 words (512 + 512).
 
 ## 8. Host interface (SPI slave, mode 0)
 Commands: `WR_MEM addr, n, data…` · `RD_MEM` · `WR_REG` · `RD_REG` · `START` · `STOP` · `STEP` · `STATUS` · `FIFO_RD/WR`.
@@ -232,7 +247,7 @@ Host software (Python): assembler, loader, CLI (`splice load/run/capture/decode`
 
 ## 12. Open questions / risks
 - [ ] SRAM macro availability & PDN on CMOS5L (week 1): flow precedent found, shuttle acceptance and our own harden still open (section 7.2)
-- [ ] Unified single-port memory conflicts with fixed cycle counts (section 7.3): needs a decision
+- [x] Unified single-port memory conflicts with fixed cycle counts: resolved with two macros (section 7.3)
 - [ ] Does 6x4 fit engine + fabric + capture? (synth early, week 1–3)
 - [ ] 8x4 approval from Jane Street (would relax area)
 - [ ] Exact pass-through latency through TT's pin mux (GL sim + reading TT mux docs)

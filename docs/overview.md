@@ -73,24 +73,25 @@ they wrote and how each piece was checked independently.
   heartbeat counter, with all bus lines safely released at reset.
 - The placeholder has been through the full chip-build flow at 6x4. Harden, gate-level test and Tiny
   Tapeout's precheck all passed, with 0 DRC and 0 LVS errors.
-- The GitHub Pages viewer job fails because Pages isn't enabled while the repo is private. This does
-  not affect the chip.
+- The GitHub Pages viewer job fails because Pages isn't enabled yet. This does not affect the chip.
 - Memory area was estimated by synthesis, and the use of IHP's SRAM blocks on this process was
   researched ([spec section 7](architecture.md#7-memory)).
 
 **Not started:** the engine, line fabric, capture unit and host interface. Engine RTL waits for the
-two approvals below.
+instruction set approval below.
 
-## Decisions needed
+## Decisions
 
-1. **Memory size.** The proposal is two IHP SRAM blocks: 256x16 for the program and 512x16 for
-   capture, using about 8% of the die. The original plan of one shared block doesn't work well: a
-   single-port SRAM can't fetch an instruction and store a capture in the same cycle, and that would
-   break the exact timing the design depends on.
+**Memory (approved, pending a test build).** SPLICE will use two IHP SRAM blocks: 256x16 for the
+program and 512x16 for capture, using about 8% of the die. Separate blocks mean an instruction fetch
+and a capture write can never collide, which keeps the design simple to prove. The test build
+hardens both blocks on a branch before anything depends on them.
 
-   The fallback is 128x16 + 64x16 built from standard latches. It fits, at about twice the area for
-   a quarter of the storage, but 64 words of capture holds only a few bytes of SPI traffic.
-2. **Instruction set.** It has to be frozen as v1 in week 2.
+The fallback is 128x16 + 64x16 built from standard latches. It fits, at about twice the area for a
+quarter of the storage, but 64 words of capture holds only a few bytes of SPI traffic. The options
+compared are in [spec section 7.3](architecture.md#73-decision-two-macros-not-one-unified-macro).
+
+**Instruction set (still needed).** It has to be frozen as v1 in week 2.
 
 ## What is still uncertain
 

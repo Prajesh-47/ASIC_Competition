@@ -20,9 +20,9 @@ Plain-language overview: [`docs/overview.md`](docs/overview.md) · Architecture 
 ## Status
 
 Week 1: repo scaffolded from `TinyTapeout/ttihp-verilog-template@cmos5l`. Top is a stub
-(heartbeat + safe hi-Z reset state) that proves the RTL → GDS flow. Area probe and SRAM research
-are done; the memory size is awaiting a decision (`docs/architecture.md` section 7). No engine
-RTL yet.
+(heartbeat + safe hi-Z reset state) that proves the RTL → GDS flow. Memory decision: two IHP SRAM
+macros, 256x16 program + 512x16 capture, approved pending a test harden on a branch
+(`docs/architecture.md` section 7). No engine RTL yet.
 
 ## Repository layout
 
