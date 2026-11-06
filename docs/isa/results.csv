@@ -1,0 +1,53 @@
+workload,variant,nominal_period,words,ok,min_period,min_words,note
+uart_tx,V0,434,14,True,2,11,
+uart_tx,V1,434,6,True,1,6,period used 432
+uart_tx,V2,434,17,True,3,17,
+uart_tx,V3,434,8,True,1,8,
+uart_tx,V4,434,8,True,1,8,
+uart_rx,V0,434,9,True,2,7,
+uart_rx,V1,434,9,True,1,9,period used 432
+uart_rx,V2,434,10,True,3,10,
+uart_rx,V3,434,7,True,2,7,
+uart_rx,V4,434,7,True,2,7,
+spi_master,V0,25,18,True,4,18,
+spi_master,V1,25,13,True,4,13,
+spi_master,V2,25,18,True,4,18,
+spi_master,V3,25,13,True,4,13,
+spi_master,V4,25,13,True,4,13,
+i2c_master,V0,125,36,True,3,35,
+i2c_master,V1,125,33,True,3,32,
+i2c_master,V2,125,36,True,3,35,
+i2c_master,V3,125,23,True,1,23,
+i2c_master,V4,125,23,True,1,23,
+uart_flip,V0,434,8,True,1,7,
+uart_flip,V1,434,8,True,1,7,
+uart_flip,V2,434,12,True,2,11,
+uart_flip,V3,434,10,True,1,9,
+uart_flip,V4,434,9,True,2,6,
+uart_rewrite,V0,434,28,True,13,26,
+uart_rewrite,V1,434,26,True,9,24,
+uart_rewrite,V2,434,28,True,13,26,
+uart_rewrite,V3,434,20,True,4,20,
+uart_rewrite,V4,434,20,True,4,20,
+fuzz_flip,V0,434,29,True,4,29,
+fuzz_flip,V1,434,29,True,4,29,
+fuzz_flip,V2,434,29,True,4,29,
+fuzz_flip,V3,434,21,True,3,21,
+fuzz_flip,V4,434,21,True,3,21,
+react,V0,,,,4,,"pin edge to pin effect, cycles"
+react,V1,,,,4,,"pin edge to pin effect, cycles"
+react,V2,,,,4,,"pin edge to pin effect, cycles"
+react,V3,,,,4,,"pin edge to pin effect, cycles"
+react,V4,,,,3,,"pin edge to pin effect, cycles"
+dual_flip,V0,434,40,True,30,40,exact=False; exact at min=False
+dual_flip,V1,434,40,True,30,40,exact=False; exact at min=False
+dual_flip,V2,434,40,True,30,40,exact=False; exact at min=False
+dual_flip,V3,434,40,True,30,40,exact=False; exact at min=False
+dual_flip,V4,434,11,True,4,8,exact=True; exact at min=True
+dual_flip,V5,434,16,True,4,16,exact=True; exact at min=False
+spi_inline,V0,25,21,True,6,21,"half SCK period, cycles"
+spi_inline,V3T,25,15,True,6,15,"half SCK period, cycles"
+bidir_rewrite,V5,434,40,True,6,40,V5=2 barrel contexts; V6=2 engines
+bidir_rewrite,V6,434,40,True,4,40,V5=2 barrel contexts; V6=2 engines
+match_flip,V5,434,34,True,6,32,V5=barrel software; V7=hardware match rule
+match_flip,V7,434,11,True,4,9,V5=barrel software; V7=hardware match rule
