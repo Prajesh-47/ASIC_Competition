@@ -72,6 +72,7 @@ module splice_host (
   reg       rd_wait;   // a memory read is on its way
   reg       rd_capture;
   reg       reg_load;  // register read data is ready
+  reg       pop_next;  // FIFO head is loaded in tx, and goes once the host clocks it
 
   wire       byte_done = cs_active && sck_rise && bitn == 3'd7;
   wire [7:0] byte_in = {rx, mosi_s[1]};
@@ -106,7 +107,9 @@ module splice_host (
       reg_addr <= 0;
       reg_wdata <= 0;
       fifo_wdata <= 0;
+      pop_next <= 0;
     end else if (!cs_active) begin
+      pop_next <= 1'b0;
       bitn <= 0;
       phase <= 0;
       word_lo <= 0;
@@ -120,6 +123,10 @@ module splice_host (
       if (reg_load) tx <= reg_rdata;
 
       if (sck_rise) begin
+        if (pop_next) begin
+          fifo_pop <= 1'b1;
+          pop_next <= 1'b0;
+        end
         rx <= byte_in[6:0];
         bitn <= bitn + 3'd1;
       end
@@ -139,7 +146,7 @@ module splice_host (
             FIFO_RD: begin
               tx <= fifo_rdata[15:8];
               rd_word <= fifo_rdata;
-              fifo_pop <= !fifo_empty;
+              pop_next <= !fifo_empty;
             end
             default: ;
           endcase
@@ -199,7 +206,7 @@ module splice_host (
           end else begin
             tx <= fifo_rdata[15:8];
             rd_word <= fifo_rdata;
-            fifo_pop <= !fifo_empty;
+            pop_next <= !fifo_empty;
           end
         end
       end

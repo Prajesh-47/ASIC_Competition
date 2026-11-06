@@ -293,6 +293,30 @@ async def test_host_registers(dut):
 
 # ------------------------------------------------------------------ Reprogrammed protocols
 @cocotb.test()
+async def test_fifo_read_consumes_exactly_what_it_reads(dut):
+    """Ending a read must leave the rest queued. Status tells empty apart from a stored 0."""
+    await reset(dut)
+    prog = assemble("""
+        pullw 16
+        push
+        pullw 16
+        push
+        pullw 16
+        push
+        halt
+""")
+    await load_program(dut, prog.words)
+    await start(dut)
+    await fifo_write(dut, [0x1111, 0x0000, 0x3333])
+    await ClockCycles(dut.clk, 100)
+    for expected in (0x1111, 0x0000, 0x3333):
+        assert not (await status(dut)) & 0x10, f"{expected:#x} should still be queued"
+        await spi_xfer(dut, [0x21])  # the command alone reads nothing, so it consumes nothing
+        assert (await fifo_read(dut, 1)) == [expected]
+    assert (await status(dut)) & 0x10, "FIFO should now be empty"
+
+
+@cocotb.test()
 async def test_uart_tx_loaded_over_spi(dut):
     """The first end-to-end milestone: a program loaded after reset sends exact UART frames."""
     await reset(dut)

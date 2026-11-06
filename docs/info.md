@@ -29,6 +29,6 @@ Full architecture: see `docs/architecture.md` in the project repository.
 
 ## External hardware
 
-- The TT demo board RP2040 acts as the SPI host.
+- The ETR demo board's RP2350 acts as the SPI host, using `host/board/splice_agent.py`.
 - Interposing needs two devices wired to the A side (`uio[3:0]`) and B side (`uio[7:4]`) of each pair.
 - I2C needs external pull-ups on both sides. Pads are not 5 V tolerant.

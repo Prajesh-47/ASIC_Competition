@@ -17,6 +17,12 @@ class Board:
     def load(self, words, base=0):
         self.xfer([0x01, base >> 8, base & 0xFF] + word_bytes(words))
 
+    def set_contexts(self, ctx1):
+        """Run one context if ctx1 is 0, otherwise two with context 1 starting at that address."""
+        self.write_reg(0, int(ctx1 != 0))
+        self.write_reg(4, ctx1 >> 8)
+        self.write_reg(5, ctx1 & 0xFF)
+
     def read_program(self, count, base=0):
         data = self.xfer([0x02, base >> 8, base & 0xFF] + [0] * (2 * count))
         return [data[3 + 2 * i] << 8 | data[4 + 2 * i] for i in range(count)]

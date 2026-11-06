@@ -23,6 +23,11 @@ jobs:
         shell: bash
         run: pip install -r test/requirements.txt
 
+      - name: Assembler and host tests
+        run: |
+          (cd model && python3 -m tests.test_asm)
+          (cd host && python3 -m tests.test_host)
+
       - name: Run tests
         run: |
           cd test

@@ -293,11 +293,11 @@ SCK is at most core/8, oversampled with 2-flop synchronizers, so the whole chip 
 | `0x05` / `0x06` | Write / read register | `reg` then value | See below |
 | `0x10` / `0x11` | `START` / `STOP` | | `START` keeps FIFO words pushed beforehand. `STOP` releases every line |
 | `0x12` | Status | one byte | `{0, 0, irq, e2h_empty, h2e_full, halted[1:0], running}` |
-| `0x20` / `0x21` | Write / read FIFO | words | Writing a full FIFO drops the word. Reading an empty FIFO returns 0 |
+| `0x20` / `0x21` | Write / read FIFO | words | Writing a full FIFO drops the word. Reading an empty FIFO returns 0. A word leaves the FIFO when the host starts clocking it, so ending a read after N words consumes exactly N |
 
 Registers: 0 mode (bit 0: two contexts), 1 open-drain lines, 2 fast pass-through lines, 3 bridge holdoff, 4 and 5 context 1's start address, 6 and 7 capture's 4 watched lines, 8 and 9 capture prescaler, 10 capture control (write bits 2:0 mode, bit 7 start, bit 6 stop; read `{active, wrapped, triggered, 0, 0, mode}`), 11 and 12 entries kept after a trigger, 13 and 14 capture write pointer (read only). **`STEP` isn't built yet.**
 
-Host software (Python): assembler, loader, CLI (`splice load/run/capture/decode`), sigrok export. Runs against RTL sim (cocotb) **and** the real board (RP2040 on TT demo board as SPI host).
+Host software (Python): assembler, loader, CLI (`python3 -m splice_host`: setup, load, run, stop, status, reg, push, pop, capture), VCD export for PulseView. The library runs against RTL sim (cocotb) and, through a small MicroPython agent on the ETR demo board's RP2350, the real board. The agent's SPI is bit-banged because `ui[2:0]` and `uo[0]` aren't on a hardware SPI pin set. It is checked against RTL by replaying its pin activity, and hasn't run on a board.
 
 ---
 

@@ -5,9 +5,12 @@
 # by a device model or decoder written from that protocol's rules. Only top-level ports are used, so
 # these also run on the gate-level netlist.
 
-import cocotb
+import os
 
-from test import capture, fifo_read, fifo_write, firmware, load_program, reset, start, stop, write_reg  # noqa: F401
+import cocotb
+from cocotb.triggers import ClockCycles
+
+from test import HERE, assemble, capture, fifo_read, fifo_write, firmware, load_program, reset, spi_xfer, start, stop, write_reg  # noqa: F401
 
 
 def level(out, oe, line, idle=1):
@@ -528,3 +531,216 @@ async def test_bridge_fails_with_too_short_a_holdoff(dut):
     sent, got, acks, idle, done = await i2c_through_bridge(dut, "i2c_bridge.s", 125, 50, 2)
     assert not (done and got == sent and acks == [0, 0, 0, 0] and idle == (1, 1, 1, 1)), "should have failed"
     await reset(dut)
+
+
+def can_stuff(bits):
+    """Bit stuffing as the CAN spec has it: after five equal bits, insert the opposite."""
+    out, last, run = [], None, 0
+    for b in bits:
+        out.append(b)
+        run = run + 1 if b == last else 1
+        last = b
+        if run == 5:
+            last, run = 1 - b, 1
+            out.append(last)
+    return out
+
+
+def can_dlc_frame(cid, data):
+    bits = [0] + [(cid >> k) & 1 for k in range(10, -1, -1)] + [0, 0, 0]
+    bits += [(len(data) >> k) & 1 for k in range(3, -1, -1)]
+    return bits + [(byte >> k) & 1 for byte in data for k in range(7, -1, -1)]
+
+
+def can_wire(frame, crc=None):
+    """Bits on the wire up to and including the ACK slot and its delimiter, left recessive for the receiver."""
+    crc = can_crc(frame) if crc is None else crc
+    return can_stuff(frame + [(crc >> k) & 1 for k in range(14, -1, -1)]) + [1, 1, 1]
+
+
+async def can_receive(dut, wires, bit=100, ppm=0, gap_bits=12, words_of=None):
+    """Plays frames onto L4 with a sender clock off by ppm, reading the FIFO throughout as a host must,
+    because it holds 4 words and long frames need more. Returns the ACK slots' levels and the words."""
+    await stop(dut)
+    await load_program(dut, words_of or firmware("can_rx.s", BIT=bit).words)
+    await write_reg(dut, 1, 0x10)
+    await start(dut)
+    period = bit * (1_000_000 + ppm) / 1_000_000
+    edges, t, acks = [], 15 * bit, []
+    for wire in wires:
+        for i, level_ in enumerate(wire):
+            edges.append((round(t), level_))
+            if i == len(wire) - 2:
+                acks.append(round(t + period / 2))
+            t += period
+        edges.append((round(t), 1))
+        t += gap_bits * period
+    seen, i, now = {}, 0, 1
+    watch = set(acks)
+
+    def bus(t, out, oe):
+        nonlocal i, now
+        while i < len(edges) and edges[i][0] <= t:
+            now = edges[i][1]
+            i += 1
+        value = now & level(out, oe, 4)
+        if t in watch:
+            seen[t] = value
+        return 0xEF | (value << 4)
+
+    words, done = [], []
+
+    async def reader():
+        # Finishes its transaction before stopping: cancelling mid-read would lose the popped word
+        while True:
+            empty = (await spi_xfer(dut, [0x12, 0]))[1] & 0x10
+            if not empty:
+                words.extend(await fifo_read(dut, 1))
+            elif done:
+                return
+
+    task = cocotb.start_soon(reader())
+    await capture(dut, round(t) + 2 * bit, bus)
+    done.append(True)
+    await task
+    return seen, acks, words
+
+
+def can_bits_of(words, count):
+    return [(w >> (15 - i)) & 1 for w in words for i in range(16)][:count]
+
+
+@cocotb.test()
+async def test_can_receive_checks_crc_and_acks(dut):
+    """Every data length, a run-heavy ID, and sender clocks off by the 1.58% CAN allows."""
+    await reset(dut)
+    for cid, data, ppm in ((0x2A5, [0xA7], 0), (0x7FF, [0x00, 0xFF, 0x00], 15800), (0x000, [0xFF] * 8, -15800),
+                           (0x155, [], 15800), (0x123, list(range(0x10, 0x18)), -15800)):
+        frame = can_dlc_frame(cid, data)
+        seen, acks, words = await can_receive(dut, [can_wire(frame)], ppm=ppm)
+        assert seen[acks[0]] == 0, f"no ACK for id {cid:#x}, clock {ppm} ppm"
+        total = len(frame) + 15
+        count = total // 16 + 1
+        assert len(words) == count + 1, f"{len(words)} words for id {cid:#x}"
+        sent = frame + [(can_crc(frame) >> k) & 1 for k in range(14, -1, -1)]
+        assert can_bits_of(words[:count], total) == sent, f"wrong bits for id {cid:#x}, clock {ppm} ppm"
+        assert words[count] == 0, f"status {words[count]} for a good frame"
+
+
+@cocotb.test()
+async def test_can_receive_rejects_bad_frames(dut):
+    """A wrong CRC gets no ACK and status 1. Six equal bits are a stuff error, status 2."""
+    await reset(dut)
+    frame = can_dlc_frame(0x2A5, [0xA7])
+    seen, acks, words = await can_receive(dut, [can_wire(frame, crc=can_crc(frame) ^ 1)])
+    assert seen[acks[0]] == 1, "ACKed a frame with a bad CRC"
+    count = (len(frame) + 15) // 16 + 1
+    assert words[count] == 1
+
+    wire = can_wire(frame)
+    at = wire.index(0, 1)
+    broken = wire[:at] + [0] * 6 + [1] * 20
+    _, _, words = await can_receive(dut, [broken])
+    assert words and words[-1] == 2, f"no stuff error reported: {[hex(w) for w in words]}"
+
+
+@cocotb.test()
+async def test_can_receive_back_to_back_frames(dut):
+    """Two frames with the minimum gap: the receiver must be ready again in time."""
+    await reset(dut)
+    first, second = can_dlc_frame(0x111, [0x5A]), can_dlc_frame(0x222, [0xC3, 0x3C])
+    seen, acks, words = await can_receive(dut, [can_wire(first), can_wire(second)], gap_bits=10)
+    assert seen[acks[0]] == 0 and seen[acks[1]] == 0
+    n1, n2 = (len(first) + 15) // 16 + 1, (len(second) + 15) // 16 + 1
+    assert len(words) == n1 + n2 + 2
+    assert words[n1] == 0 and words[n1 + 1 + n2] == 0
+    assert can_bits_of(words[n1 + 1:n1 + 1 + n2], len(second)) == second
+
+
+@cocotb.test()
+async def test_can_receive_needs_its_clock_recovery(dut):
+    """Control: the same program without the resync must fail on a slow sender. It proves the others mean something."""
+    await reset(dut)
+    with open(os.path.join(HERE, "..", "model", "firmware", "can_rx.s"), encoding="utf-8") as f:
+        source = f.read()
+    marker = "        jmp     f, done\n        tphase  half\n"
+    assert marker in source
+    frame = can_dlc_frame(0x123, list(range(0x10, 0x18)))
+    seen, acks, _ = await can_receive(dut, [can_wire(frame)], ppm=-15800,
+                                      words_of=assemble(source.replace(marker, ""), {"BIT": 100}).words)
+    assert seen[acks[0]] == 1, "still ACKed with no clock recovery, so the test can't tell the difference"
+
+
+def usb_wire(payload):
+    """(D+, D-) per bit time for SYNC, payload bytes and EOP: LSB first, stuffed after six ones, NRZI, low speed."""
+    bits = [0, 0, 0, 0, 0, 0, 0, 1] + [(byte >> k) & 1 for byte in payload for k in range(8)]
+    stuffed, run = [], 0
+    for b in bits:
+        stuffed.append(b)
+        run = run + 1 if b else 0
+        if run == 6:
+            stuffed.append(0)
+            run = 0
+    wire, j = [], True
+    for b in stuffed:
+        if not b:
+            j = not j
+        wire.append((0, 1) if j else (1, 0))
+    return wire + [(0, 0), (0, 0), (0, 1)], bits
+
+
+def usb_unpack(words):
+    """Bits from the FIFO words: every word is 16 bits, oldest lowest, except the last, which ends in its marker."""
+    bits = [(w >> i) & 1 for w in words[:-1] for i in range(16)]
+    last = words[-1]
+    assert last, "no marker in the last word"
+    low = (last & -last).bit_length() - 1
+    return bits + [(last >> i) & 1 for i in range(low + 1, 16)]
+
+
+async def usb_receive(dut, payloads, bit=100 / 3, ppm=0):
+    await stop(dut)
+    await load_program(dut, firmware("usb_ls_rx.s").words)
+    await start(dut)
+    period = bit * (1_000_000 + ppm) / 1_000_000
+    results = []
+    await ClockCycles(dut.clk, 40)
+    for payload in payloads:
+        wire, bits = usb_wire(payload)
+        edges = [(round(40 + i * period), lv) for i, lv in enumerate(wire)]
+        words, done = [], []
+
+        async def reader():
+            while True:
+                empty = (await spi_xfer(dut, [0x12, 0]))[1] & 0x10
+                if not empty:
+                    words.extend(await fifo_read(dut, 1))
+                elif done:
+                    return
+
+        now, i = (0, 1), 0
+
+        def bus(t, out, oe):
+            nonlocal now, i
+            while i < len(edges) and edges[i][0] <= t:
+                now = edges[i][1]
+                i += 1
+            return 0xCF | now[0] << 4 | now[1] << 5
+
+        task = cocotb.start_soon(reader())
+        await capture(dut, edges[-1][0] + 200, bus)
+        assert int(str(dut.uo_out.value)[-2]) == 1, "IRQ should say the packet is over"
+        done.append(True)
+        await task
+        results.append((usb_unpack(words), bits))
+    return results
+
+
+@cocotb.test()
+async def test_usb_ls_receive(dut):
+    """NRZI and destuffing, with long runs of ones that force stuff bits, and clocks off by the 1.5% USB allows."""
+    await reset(dut)
+    packets = [[0xC3, 0x12, 0x34], [0x4B] + [0xFF] * 8 + [0x00, 0x00], [0xD2], [0x4B, 0xFE, 0x7F, 0xFF, 0x01]]
+    for ppm in (0, 15000, -15000):
+        for got, sent in await usb_receive(dut, packets, ppm=ppm):
+            assert got == sent, f"at {ppm} ppm: sent {sent}, got {got}"

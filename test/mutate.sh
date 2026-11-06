@@ -57,6 +57,7 @@ run "reset leaves a line driven" $T "      line_oe <= 8'd0;
 run "host write skips a word" $H "if (mem_req && mem_we) mem_addr <= mem_addr + 9'd1;" "if (mem_req && mem_we) mem_addr <= mem_addr + 9'd2;"
 run "FIFO read loses the low byte" $H "tx <= rd_word[7:0];" "tx <= 8'd0;"
 run "STOP doesn't release lines" $T "wire engine_rst = !rst_n || start || stop;" "wire engine_rst = !rst_n || start;"
+run "FIFO read pops the word after the last one read" $H "if (pop_next) begin" "if (pop_next || (byte_done && cmd == 8'h21)) begin"
 run "empty FIFO returns stale data" splice_fifo.v "empty ? 16'd0 : mem[rp[DEPTH_LOG2-1:0]]" "mem[rp[DEPTH_LOG2-1:0]]"
 run "CMP ignores its second operand" $E "O_CMP: z[c] <= opnd_cmp == opnd_mov;" "O_CMP: z[c] <= opnd_cmp == 16'd0;"
 run "AND acts as XOR" $E "rr[{c, rn_alu}] <= alu_and;" "rr[{c, rn_alu}] <= alu_xor;"
