@@ -94,105 +94,59 @@ module splice_engine (
   endgenerate
 
   // ------------------------------------------------------------------ Decode
-  localparam [5:0]
-      O_NOP = 0, O_TSET = 1, O_JMP = 2, O_CALL = 3, O_DLY = 4, O_LDI = 5, O_SRI = 6, O_SET = 7,
-      O_MODE = 8, O_OUT = 9, O_IN = 10, O_OUTB = 11, O_INB = 12, O_DJNZ = 13, O_WAIT = 14, O_ADD = 15,
-      O_CMPI = 16, O_AND = 17, O_BCI = 18, O_CMP = 19, O_DLYR = 20, O_HALT = 21, O_IRQ = 22, O_MOV = 23,
-      O_MSB = 24, O_PROBE = 25, O_PULL = 26, O_PULLW = 27, O_PUSH = 28, O_RET = 29, O_SIDE = 30,
-      O_TPHASE = 31, O_TRIG = 32, O_TSRC = 33, O_TSTB = 34, O_WAITT = 35, O_XOR = 36, O_RAND = 37,
-      O_SHL = 38, O_SHR = 39, O_CAPMARK = 40, O_CAPOFF = 41, O_CAPON = 42;
+  // Straight from the opcode bits (docs/architecture.md section 5.5). Read data to a flop is the longest
+  // path in the chip, so there's no encoded opcode in between. Each is exact, so reserved encodings match
+  // none of them and do nothing.
+  wire is_tset   = ins[15:13] == 3'b000;
+  wire is_jmp    = ins[15:12] == 4'b0010;
+  wire is_call   = ins[15:12] == 4'b0011;
+  wire is_dly    = ins[15:12] == 4'b0100;
+  wire is_ldi    = ins[15:12] == 4'b0101;
+  wire is_sri    = ins[15:12] == 4'b0110;
+  wire is_set    = ins[15:11] == 5'b01110;
+  wire is_mode   = ins[15:11] == 5'b01111;
+  wire is_out    = ins[15:11] == 5'b10000;
+  wire is_in     = ins[15:11] == 5'b10001;
+  wire is_outb   = ins[15:11] == 5'b10010;
+  wire is_inb    = ins[15:11] == 5'b10011;
+  wire is_djnz   = ins[15:11] == 5'b10100;
+  wire is_wait   = ins[15:10] == 6'b101110;
+  wire is_add    = ins[15:10] == 6'b101111;
+  wire is_cmpi   = ins[15:10] == 6'b110000;
+  wire is_and    = ins[15:8] == 8'b11001101;
+  wire is_bci    = ins[15:8] == 8'b11001110;
+  wire is_capmark = ins[15:8] == 8'b11001111;
+  wire is_capoff = ins[15:8] == 8'b11010000;
+  wire is_capon  = ins[15:8] == 8'b11010001;
+  wire is_cmp    = ins[15:8] == 8'b11010010;
+  wire is_dlyr   = ins[15:8] == 8'b11010011;
+  wire is_halt   = ins[15:8] == 8'b11010100;
+  wire is_irq    = ins[15:8] == 8'b11010101;
+  wire is_mov    = ins[15:8] == 8'b11010110;
+  wire is_msb    = ins[15:8] == 8'b11010111;
+  wire is_nop    = ins[15:8] == 8'b11011000;
+  wire is_probe  = ins[15:8] == 8'b11011001;
+  wire is_pull   = ins[15:8] == 8'b11011010;
+  wire is_pullw  = ins[15:8] == 8'b11011011;
+  wire is_push   = ins[15:8] == 8'b11011100;
+  wire is_ret    = ins[15:8] == 8'b11011101;
+  wire is_side   = ins[15:8] == 8'b11011110;
+  wire is_tphase = ins[15:8] == 8'b11011111;
+  wire is_trig   = ins[15:8] == 8'b11100000;
+  wire is_tsrc   = ins[15:8] == 8'b11100001;
+  wire is_tstb   = ins[15:8] == 8'b11100010;
+  wire is_waitt  = ins[15:8] == 8'b11100011;
+  wire is_xor    = ins[15:8] == 8'b11100100;
+  wire is_rand   = ins[15:6] == 10'b1110010100;
+  wire is_shl    = ins[15:6] == 10'b1110010101;
+  wire is_shr    = ins[15:6] == 10'b1110010110;
 
-  reg [5:0]  op;
-  reg        tick_q;
-  reg [1:0]  side;
-  reg [3:0]  dly_field;
-
-  always @* begin
-    op = O_NOP;
-    tick_q = 1'b0;
-    side = 2'b00;
-    dly_field = 4'd0;
-    (* parallel_case *) casez (ins)
-      16'b000?????????????: op = O_TSET;
-      16'b0010????????????: op = O_JMP;
-      16'b0011????????????: op = O_CALL;
-      16'b0100????????????: op = O_DLY;
-      16'b0101????????????: op = O_LDI;
-      16'b0110????????????: op = O_SRI;
-      16'b01110???????????: begin
-        op = O_SET;
-        tick_q = ins[5];
-        side = ins[4:3];
-        dly_field = {1'b0, ins[2:0]};
-      end
-      16'b01111???????????: begin
-        op = O_MODE;
-        tick_q = ins[4];
-        dly_field = ins[3:0];
-      end
-      16'b10000???????????: begin
-        op = O_OUT;
-        tick_q = ins[5];
-        side = ins[4:3];
-        dly_field = {1'b0, ins[2:0]};
-      end
-      16'b10001???????????: begin
-        op = O_IN;
-        tick_q = ins[6];
-        side = ins[5:4];
-        dly_field = ins[3:0];
-      end
-      16'b10010???????????: begin
-        op = O_OUTB;
-        tick_q = ins[6];
-        side = ins[5:4];
-      end
-      16'b10011???????????: begin
-        op = O_INB;
-        tick_q = ins[6];
-        side = ins[5:4];
-      end
-      16'b10100???????????: op = O_DJNZ;
-      16'b101110??????????: op = O_WAIT;
-      16'b101111??????????: op = O_ADD;
-      16'b110000??????????: op = O_CMPI;
-      16'b11001101????????: op = O_AND;
-      16'b11001110????????: op = O_BCI;
-      16'b11001111????????: op = O_CAPMARK;
-      16'b11010000????????: op = O_CAPOFF;
-      16'b11010001????????: op = O_CAPON;
-      16'b11010010????????: op = O_CMP;
-      16'b11010011????????: op = O_DLYR;
-      16'b11010100????????: op = O_HALT;
-      16'b11010101????????: op = O_IRQ;
-      16'b11010110????????: op = O_MOV;
-      16'b11010111????????: op = O_MSB;
-      16'b11011000????????: begin
-        op = O_NOP;
-        tick_q = ins[7];
-        side = ins[6:5];
-      end
-      16'b11011001????????: begin
-        op = O_PROBE;
-        tick_q = ins[3];
-      end
-      16'b11011010????????: op = O_PULL;
-      16'b11011011????????: op = O_PULLW;
-      16'b11011100????????: op = O_PUSH;
-      16'b11011101????????: op = O_RET;
-      16'b11011110????????: op = O_SIDE;
-      16'b11011111????????: op = O_TPHASE;
-      16'b11100000????????: op = O_TRIG;
-      16'b11100001????????: op = O_TSRC;
-      16'b11100010????????: op = O_TSTB;
-      16'b11100011????????: op = O_WAITT;
-      16'b11100100????????: op = O_XOR;
-      16'b1110010100??????: op = O_RAND;
-      16'b1110010101??????: op = O_SHL;
-      16'b1110010110??????: op = O_SHR;
-      default: op = O_NOP;  // reserved encodings do nothing
-    endcase
-  end
+  wire is_bit = is_outb || is_inb;
+  wire tick_q = ((is_set || is_out) && ins[5]) || (is_mode && ins[4]) || ((is_in || is_bit) && ins[6])
+             || (is_nop && ins[7]) || (is_probe && ins[3]);
+  wire [1:0] side = ({2{is_set || is_out}} & ins[4:3]) | ({2{is_in || is_bit}} & ins[5:4])
+                  | ({2{is_nop}} & ins[6:5]);
+  wire [3:0] dly_field = ({4{is_set || is_out}} & {1'b0, ins[2:0]}) | ({4{is_mode || is_in}} & ins[3:0]);
 
   // ------------------------------------------------------------------ Operands
   wire [3:0]  ln_a = ins[10:7];              // SET, OUT, IN, OUTB, INB
@@ -240,31 +194,11 @@ module splice_engine (
   wire [15:0] sr_shifted_in = msb[c] ? {sr[c][14:0], in_bit} : {in_bit, sr[c][15:1]};
   wire [4:0]  bc_dec = (bc[c] == 0) ? 5'd0 : bc[c] - 5'd1;
 
-  // ------------------------------------------------------------------ Fast decode
-  // Instruction word to memory address is the longest path in the chip, so everything on it decodes
-  // straight from the opcode bits, and doesn't go through op. Must agree with the table above.
-  wire is_jmp   = ins[15:12] == 4'b0010;
-  wire is_call  = ins[15:12] == 4'b0011;
-  wire is_djnz  = ins[15:11] == 5'b10100;
-  wire is_ret   = ins[15:8] == 8'b11011101;
-  wire is_wait  = ins[15:10] == 6'b101110;
-  wire is_waitt = ins[15:8] == 8'b11100011;
-  wire is_pullw = ins[15:8] == 8'b11011011;
-  wire is_set   = ins[15:11] == 5'b01110;
-  wire is_mode  = ins[15:11] == 5'b01111;
-  wire is_out   = ins[15:11] == 5'b10000;
-  wire is_in    = ins[15:11] == 5'b10001;
-  wire is_bit   = ins[15:12] == 4'b1001;        // OUTB, INB
-  wire is_nop   = ins[15:8] == 8'b11011000;
-  wire is_probe = ins[15:8] == 8'b11011001;
-  wire tick_f = ((is_set || is_out) && ins[5]) || (is_mode && ins[4]) || ((is_in || is_bit) && ins[6])
-             || (is_nop && ins[7]) || (is_probe && ins[3]);
-
   // ------------------------------------------------------------------ Execute conditions
   wire slot = running && !prim;
   wire gated = slot && !halted[c] && stall[c] == 0;
   wire pend_eff = pending[c] || tick_now[c];
-  wire active = gated && (!tick_f || pend_eff);   // reached: a side-set applies
+  wire active = gated && (!tick_q || pend_eff);   // reached: a side-set applies
 
   // WAIT
   wire wait_bit = lines[ln_w];
@@ -335,19 +269,19 @@ module splice_engine (
     src_nx = src;
     if (active && side[1] && side_ln[c] < 4'd12) eng_nx[side_ln[c][3:0]] = side[0];
     if (ex) begin
-      if (op == O_SET && ln_a < 4'd12) eng_nx[ln_a] = ins[6];
-      if ((op == O_OUT || op == O_OUTB) && ln_a < 4'd12) eng_nx[ln_a] = sbit;
-      if (op == O_MODE) src_nx[3 * ins[10:8] +: 3] = ins[7:5];
+      if (is_set && ln_a < 4'd12) eng_nx[ln_a] = ins[6];
+      if ((is_out || is_outb) && ln_a < 4'd12) eng_nx[ln_a] = sbit;
+      if (is_mode) src_nx[3 * ins[10:8] +: 3] = ins[7:5];
     end
   end
 
   // ------------------------------------------------------------------ FIFOs
-  assign h2e_pop = ex && (op == O_PULLW || (op == O_PULL && !h2e_empty));
-  assign e2h_push = ex && op == O_PUSH;
+  assign h2e_pop = ex && (is_pullw || (is_pull && !h2e_empty));
+  assign e2h_push = ex && is_push;
   assign e2h_data = sr[c];
-  assign cap_on = ex && op == O_CAPON;
-  assign cap_off = ex && op == O_CAPOFF;
-  assign cap_mark = ex && op == O_CAPMARK;
+  assign cap_on = ex && is_capon;
+  assign cap_off = ex && is_capoff;
+  assign cap_mark = ex && is_capmark;
 
   // ------------------------------------------------------------------ Clocked state
   // The immediate is 8 bits, so only the low half adds, and the high half is picked by its carry.
@@ -360,6 +294,50 @@ module splice_engine (
   wire [15:0] lfsr_nx = {1'b0, lfsr[c][15:1]} ^ (lfsr[c][0] ? 16'hB400 : 16'h0000);
   wire [15:0] mov_val = opnd_mov;
   wire [13:0] phase_half = {2'd0, tp[c][12:1]};
+
+  // Write ports. Each state element takes one data word selected by AND-OR, rather than one path per
+  // instruction, which would give every bit of the register file its own mux tree.
+  wire [15:0] ldi_reg = rr[{c, rn_ldi}];
+  wire [15:0] alu_reg = rr[{c, rn_alu}];
+  wire [15:0] sft_reg = rr[{c, rn_sft}];
+  wire        is_shift = is_shr || is_shl;
+  wire        mov_rr = is_mov && !ins[7];
+
+  wire rr_we = ex && (is_ldi || is_add || is_xor || is_and || is_shift || is_rand || is_djnz || mov_rr);
+  wire [1:0] rr_idx = ({2{is_ldi}} & rn_ldi) | ({2{is_add}} & rn_add) | ({2{is_xor || is_and}} & rn_alu)
+                    | ({2{is_shift || is_rand}} & rn_sft) | ({2{is_djnz}} & rn_djnz) | ({2{mov_rr}} & ins[6:5]);
+  wire [15:0] rr_wd = ({16{is_ldi}} & (ins[9] ? {ins[8:1], ldi_reg[7:0]} : {8'd0, ins[8:1]}))
+                    | ({16{is_add}} & alu_add)
+                    | ({16{is_xor}} & alu_xor)
+                    | ({16{is_and}} & alu_and)
+                    | ({16{is_shr}} & {1'b0, sft_reg[15:1]})
+                    | ({16{is_shl}} & {sft_reg[14:0], 1'b0})
+                    | ({16{is_rand}} & lfsr_nx)
+                    | ({16{is_djnz}} & djnz_dec)
+                    | ({16{mov_rr}} & mov_val);
+
+  wire z_we = is_add || is_xor || is_and || is_cmp || is_cmpi || is_tstb || is_probe;
+  wire z_wd = (is_add && alu_add == 0) || (is_xor && alu_xor == 0) || (is_and && alu_and == 0)
+           || (is_cmp && opnd_cmp == opnd_mov) || (is_cmpi && add_reg == {8'd0, ins[7:0]})
+           || (is_tstb && sbit) || (is_probe && lines[ln_p]);
+
+  wire f_we = is_pull || (is_push && e2h_full) || is_shift;
+  wire f_wd = (is_pull && h2e_empty) || is_push || (is_shr && sft_reg[0]) || (is_shl && sft_reg[15]);
+
+  wire sr_out = (is_out && !ins[6]) || is_outb;
+  wire sr_in = is_in || is_inb;
+  wire sr_head = (is_pull && !h2e_empty) || is_pullw;
+  wire mov_sr = is_mov && ins[7:5] == 3'd4;
+  wire sr_we = sr_out || sr_in || sr_head || is_sri || mov_sr;
+  wire [15:0] sr_wd = ({16{sr_out}} & sr_shifted_out) | ({16{sr_in}} & sr_shifted_in)
+                    | ({16{sr_head}} & h2e_head) | ({16{is_sri}} & ({8'd0, ins[11:4]} << ins[3:0]))
+                    | ({16{mov_sr}} & mov_val);
+
+  wire mov_bc = is_mov && ins[7:5] == 3'd5;
+  wire bc_we = sr_out || sr_in || is_pullw || is_bci || mov_bc;
+  wire [4:0] bc_wd = ({5{sr_out || sr_in}} & bc_dec) | ({5{is_pullw || is_bci}} & ins[7:3]) | ({5{mov_bc}} & mov_val[4:0]);
+
+  wire [15:0] stall_wd = is_dly ? {4'd0, ins[11:0]} : is_dlyr ? alu_reg : {12'd0, dly_field};
 
   integer i;
   always @(posedge clk) begin
@@ -421,7 +399,7 @@ module splice_engine (
             if (active && tick_q) pending[c] <= 1'b0;
 
             // WAIT holds its timeout state even while blocked.
-            if (op == O_WAIT && !halted[c]) begin
+            if (is_wait && !halted[c]) begin
               if (wait_met) begin
                 to_act[c] <= 1'b0;
               end else if (to_on) begin
@@ -437,102 +415,40 @@ module splice_engine (
 
             if (ex) begin
               pc[c] <= pc_next;
-              stall[c] <= {12'd0, dly_field};
-              case (op)
-                O_OUT: if (!ins[6]) begin
-                  sr[c] <= sr_shifted_out;
-                  bc[c] <= bc_dec;
-                end
-                O_OUTB: begin
-                  sr[c] <= sr_shifted_out;
-                  bc[c] <= bc_dec;
-                end
-                O_IN, O_INB: begin
-                  sr[c] <= sr_shifted_in;
-                  bc[c] <= bc_dec;
-                end
-                O_WAITT: pending[c] <= 1'b0;
-                O_TSET: begin
-                  tp[c] <= ins[12:0];
-                  tcnt[c] <= {1'b0, ins[12:0]};
-                  pending[c] <= 1'b0;
-                end
-                O_TPHASE: begin
-                  case (ins[7:6])
-                    2'd0: tcnt[c] <= {1'b0, tp[c]} - 14'd1;
-                    2'd1: tcnt[c] <= phase_half - 14'd1;
-                    2'd2: tcnt[c] <= {1'b0, tp[c]} + phase_half - 14'd1;
-                    default: tcnt[c] <= rr[{c, 2'd1}][13:0];
-                  endcase
-                  pending[c] <= 1'b0;
-                end
-                O_TSRC: begin
-                  ts_line[c] <= ln_p;
-                  ts_want[c] <= ins[3:2];
-                  pending[c] <= 1'b0;
-                end
-                O_DLY: stall[c] <= {4'd0, ins[11:0]};
-                O_DLYR: stall[c] <= rr[{c, rn_alu}];
-                O_PULL: begin
-                  if (!h2e_empty) begin
-                    sr[c] <= h2e_head;
-                    f[c] <= 1'b0;
-                  end else f[c] <= 1'b1;
-                end
-                O_PULLW: begin
-                  sr[c] <= h2e_head;
-                  bc[c] <= ins[7:3];
-                end
-                O_PUSH: if (e2h_full) f[c] <= 1'b1;
-                O_BCI: bc[c] <= ins[7:3];
-                O_SRI: sr[c] <= {8'd0, ins[11:4]} << ins[3:0];
-                O_MSB: msb[c] <= ins[7];
-                O_SIDE: side_ln[c] <= ln_p;
-                O_LDI: rr[{c, rn_ldi}] <= ins[9] ? {ins[8:1], rr[{c, rn_ldi}][7:0]} : {8'd0, ins[8:1]};
-                O_MOV: begin
-                  case (ins[7:5])
-                    3'd4: sr[c] <= mov_val;
-                    3'd5: bc[c] <= mov_val[4:0];
-                    3'd6: to[c] <= mov_val;
-                    3'd7: lfsr[c] <= mov_val;
-                    default: rr[{c, ins[6:5]}] <= mov_val;
-                  endcase
-                end
-                O_ADD: begin
-                  rr[{c, rn_add}] <= alu_add;
-                  z[c] <= alu_add == 0;
-                end
-                O_XOR: begin
-                  rr[{c, rn_alu}] <= alu_xor;
-                  z[c] <= alu_xor == 0;
-                end
-                O_AND: begin
-                  rr[{c, rn_alu}] <= alu_and;
-                  z[c] <= alu_and == 0;
-                end
-                O_CMP: z[c] <= opnd_cmp == opnd_mov;
-                O_CMPI: z[c] <= rr[{c, rn_add}] == {8'd0, ins[7:0]};
-                O_SHR: begin
-                  f[c] <= rr[{c, rn_sft}][0];
-                  rr[{c, rn_sft}] <= {1'b0, rr[{c, rn_sft}][15:1]};
-                end
-                O_SHL: begin
-                  f[c] <= rr[{c, rn_sft}][15];
-                  rr[{c, rn_sft}] <= {rr[{c, rn_sft}][14:0], 1'b0};
-                end
-                O_RAND: begin
-                  lfsr[c] <= lfsr_nx;
-                  rr[{c, rn_sft}] <= lfsr_nx;
-                end
-                O_TSTB: z[c] <= sbit;
-                O_PROBE: z[c] <= lines[ln_p];
-                O_DJNZ: rr[{c, rn_djnz}] <= djnz_dec;
-                O_CALL: lr[c] <= pc_inc;
-                O_IRQ: irq <= 1'b1;
-                O_TRIG: trig <= 1'b1;
-                O_HALT: halted[c] <= 1'b1;
-                default: ;
-              endcase
+              stall[c] <= stall_wd;
+              if (rr_we) rr[{c, rr_idx}] <= rr_wd;
+              if (z_we) z[c] <= z_wd;
+              if (f_we) f[c] <= f_wd;
+              if (sr_we) sr[c] <= sr_wd;
+              if (bc_we) bc[c] <= bc_wd;
+              if (is_waitt) pending[c] <= 1'b0;
+              if (is_tset) begin
+                tp[c] <= ins[12:0];
+                tcnt[c] <= {1'b0, ins[12:0]};
+                pending[c] <= 1'b0;
+              end
+              if (is_tphase) begin
+                case (ins[7:6])
+                  2'd0: tcnt[c] <= {1'b0, tp[c]} - 14'd1;
+                  2'd1: tcnt[c] <= phase_half - 14'd1;
+                  2'd2: tcnt[c] <= {1'b0, tp[c]} + phase_half - 14'd1;
+                  default: tcnt[c] <= rr[{c, 2'd1}][13:0];
+                endcase
+                pending[c] <= 1'b0;
+              end
+              if (is_tsrc) begin
+                ts_line[c] <= ln_p;
+                ts_want[c] <= ins[3:2];
+                pending[c] <= 1'b0;
+              end
+              if (is_msb) msb[c] <= ins[7];
+              if (is_side) side_ln[c] <= ln_p;
+              if (is_mov && ins[7:5] == 3'd6) to[c] <= mov_val;
+              if (is_rand || (is_mov && ins[7:5] == 3'd7)) lfsr[c] <= is_rand ? lfsr_nx : mov_val;
+              if (is_call) lr[c] <= pc_inc;
+              if (is_irq) irq <= 1'b1;
+              if (is_trig) trig <= 1'b1;
+              if (is_halt) halted[c] <= 1'b1;
             end
           end
         end
