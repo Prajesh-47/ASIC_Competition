@@ -119,7 +119,7 @@ Per-pair FSM: `IDLE → A_HOLDS` (A low first: drive B low) / `B_HOLDS` (mirror)
 - **Taken jumps cost nothing extra.** The macro's read data is decoded in the same cycle. If this misses timing in RTL, the fallback is a fixed 1-cycle penalty.
 - **Pin effects land on the clock edge ending the instruction's first cycle.** Inputs pass a 2-flop synchronizer, so `IN`, `WAIT` and `PROBE` see a pin 2 cycles late. These latencies are fixed and published.
 - **First instruction runs a fixed 1 cycle after `START`.** The macro holds its output during delays.
-- **Missed tick:** if a tick fires while the last one is still pending, `F` is set, so a late program is visible and doesn't silently produce a wrong waveform.
+- **Missed tick:** if a tick fires while the last one is still pending, `F` is set, so a late program is visible and doesn't silently produce a wrong waveform. `F` changes on the following cycle, and beats any instruction writing `F` in the same cycle, so a miss can't be lost.
 
 ### 5.2 State
 Each context has its own `PC`, `R0`–`R3` (16-bit), `SR` (16-bit), `BC`, `TO`, flags `Z` and `F`, link register, bit timer, tick source, side-set line, bit order and edge memory. Registers are 4 only: CAN and USB use all of them.
@@ -279,8 +279,18 @@ Options considered (memory area only, before halos):
 **Reverse the decision if:** macros are not accepted or the harden cannot be made to pass (latch fallback); firmware does not fit in 256 words (512 + 512).
 
 ## 8. Host interface (SPI slave, mode 0)
-Commands: `WR_MEM addr, n, data…` · `RD_MEM` · `WR_REG` · `RD_REG` · `START` · `STOP` · `STEP` · `STATUS` · `FIFO_RD/WR`.
-All host-domain signals cross into the core clock via synchronizers (SCK is ≤ core/4).
+SCK is at most core/8, oversampled with 2-flop synchronizers, so the whole chip is one clock domain. Bytes are MSB first, and 16-bit words are big-endian.
+
+| Byte | Command | Then | Notes |
+|---|---|---|---|
+| `0x01` / `0x02` | Write / read program memory | `aH aL` then words | Stopped only. Auto-increments |
+| `0x03` / `0x04` | Write / read capture memory | `aH aL` then words | Stopped only |
+| `0x05` / `0x06` | Write / read register | `reg` then value | See below |
+| `0x10` / `0x11` | `START` / `STOP` | | `START` keeps FIFO words pushed beforehand. `STOP` releases every line |
+| `0x12` | Status | one byte | `{0, 0, irq, e2h_empty, h2e_full, halted[1:0], running}` |
+| `0x20` / `0x21` | Write / read FIFO | words | Writing a full FIFO drops the word |
+
+Registers: 0 mode (bit 0: two contexts), 1 open-drain lines, 2 fast pass-through lines, 3 bridge holdoff, 4 and 5 context 1's start address. **`STEP` isn't built yet.**
 
 Host software (Python): assembler, loader, CLI (`splice load/run/capture/decode`), sigrok export. Runs against RTL sim (cocotb) **and** the real board (RP2040 on TT demo board as SPI host).
 

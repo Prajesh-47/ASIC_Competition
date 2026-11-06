@@ -18,9 +18,10 @@ Plain-language overview: [`docs/overview.md`](docs/overview.md) · Architecture 
 
 ## Status
 
-Stub with an SRAM self-test passes the full flow, with two IHP SRAM macros (256x16 program, 512x16
-capture). ISA v1 is approved (`docs/architecture.md` section 5), proven in a cycle-exact model only.
-Next: golden model and assembler. No engine RTL yet.
+**First working engine.** A program loaded over SPI after reset drives exact UART frames, and the same
+netlist then runs SPI, UART RX and I2C with no reset, plus an inline bit flip and two contexts at once.
+Random programs match the golden model on every output pin, every cycle. Not built yet: the capture
+unit and open-drain bridge. Nothing has been on silicon.
 
 ## Repository layout
 
@@ -37,7 +38,7 @@ Next: golden model and assembler. No engine RTL yet.
 | `macro/` | IHP SRAM macro views, integration notes, and the evidence for each disabled flow check |
 | `flow/` | Our power step for the macros and a GDS check of it |
 | `lab/isa/` | Test bench behind the ISA studies. Lab code, not the golden model |
-| `model/` | Placeholder: Python golden model + assembler |
+| `model/` | Golden model, assembler and example firmware |
 | `formal/` | Placeholder: SymbiYosys proofs |
 | `host/` | Placeholder: CLI, sigrok export |
 

@@ -19,7 +19,9 @@ project:
   # Don't forget to also update `PROJECT_SOURCES` in test/Makefile.
   source_files:
     - "tt_um_prajesh47_splice.v"
-    - "splice_sram_selftest.v"
+    - "splice_fifo.v"
+    - "splice_engine.v"
+    - "splice_host.v"
     - "RM_IHPSG13_1P_256x16_c2_bm_bist.v"
     - "RM_IHPSG13_1P_512x16_c2_bm_bist.v"
 

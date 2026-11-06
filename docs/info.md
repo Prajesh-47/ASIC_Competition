@@ -16,15 +16,16 @@ export to sigrok/PulseView.
 
 Full architecture: see `docs/architecture.md` in the project repository.
 
-> Status: stub with an SRAM self-test. All bus lines are hi-Z and `uo[3]` blinks a ~3 Hz heartbeat at
-> 50 MHz. A self-test runs on two SRAM macros after reset: `uo[1]` goes high when it is done and
-> `uo[2]` goes high if it passed. Other outputs are tied low.
+> Status: early. The engine, SPI loader and line sources work in simulation and gate-level tests. The
+> capture unit and the open-drain bridge are not built yet.
 
 ## How to test
 
-1. Run the clock at 50 MHz and release `rst_n`.
-2. `uo[3]` (ACTIVE) should toggle at about 3 Hz.
-3. All `uio` pins stay hi-Z until SPLICE is configured over the host SPI port (`ui[2:0]`, `uo[0]`).
+1. Run the clock at 50 MHz and release `rst_n`. All `uio` pins stay hi-Z until a program configures them.
+2. Assemble a program: `python3 -m splice.asm firmware/uart_tx.s -o uart_tx.hex` (in `model/`).
+3. Load it over the host SPI port (`ui[2:0]`, `uo[0]`, mode 0, at most core/8): `0x01 0x00 0x00` then the words, big-endian.
+4. Push data with `0x20` then words, and start with `0x10`. `uo[3]` goes high while running. Stop with `0x11`.
+5. To change protocol, stop, load another program, and start again. Nothing else needs to change.
 
 ## External hardware
 
