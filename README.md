@@ -5,9 +5,8 @@
 Entry for the [Jane Street protocol emulator ASIC competition](https://blog.janestreet.com/protocol-emulator-asic-competition/).
 Tiny Tapeout, IHP 130 nm **CMOS5L**, **6x4 tiles**, 50 MHz.
 
-Every protocol emulator can *drive* a bus. SPLICE can also sit **inline** on a live bus between
-two chips and **watch, emulate or alter** traffic in real time, all from firmware running on a
-cycle-exact timing engine.
+A protocol emulator you reprogram in firmware, including for protocols nobody planned for. The same
+cycle-exact engine can also sit **inline** on a live bus between two chips and alter traffic as it passes.
 
 | Mode | What it does |
 |---|---|

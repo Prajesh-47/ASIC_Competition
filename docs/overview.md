@@ -19,9 +19,12 @@ of die) at a 50 MHz target clock.
 
 ## The idea
 
-Most protocol emulators only act as one end of a conversation: they can *talk to* a device. SPLICE's
-headline feature is different: it sits **in the middle of a live connection between two chips** and
-can alter the traffic as it passes. It can also talk to devices and record traffic on its own:
+SPLICE is a protocol emulator you reprogram in firmware, including for protocols nobody planned for. A
+protocol is a program you load, not fixed hardware, and it can run as either end of the conversation.
+
+The same engine also controls the pass-through path of each bus line, which adds something an ordinary
+emulator can't do: SPLICE can sit **in the middle of a live connection between two chips** and alter the
+traffic as it passes:
 
 ```
  Chip A  <---->  SPLICE  <---->  Chip B

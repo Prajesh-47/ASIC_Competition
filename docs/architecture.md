@@ -7,19 +7,11 @@
 
 ## 1. Pitch (one paragraph for the judges)
 
-SPLICE sits **inline on a live bus between two chips** and alters traffic as it passes: flip one bit, drop a frame, or rewrite a byte, on an exact cycle, under firmware control, for UART, SPI and I2C. Bidirectional I2C pass-through comes from an open-drain bridge with formally proven release and no deadlock. Cycle-exact timing is what makes this possible rather than the goal in itself: a fault lands on the bit you chose, every time. The same engine also makes SPLICE an ordinary protocol emulator and a timestamped bus capture, so one chip covers talking to a device, watching it, and testing how it copes when the bus lies to it.
+SPLICE is a protocol emulator that you reprogram in firmware, for protocols its designers never planned for. A small engine with exact, known instruction timing does the work, so UART, SPI, I2C, JTAG, CAN or a protocol nobody has written yet is a program you load over SPI, in either the controller or the target role. That same engine controls the pass-through path of every bus line, which gives SPLICE something an ordinary emulator can't do: **it can sit inline on a live bus between two chips and alter traffic as it passes.** It can flip one chosen bit, force an I2C NACK on the third transaction, or rewrite a byte with no added frame of delay, in both directions at once. Bidirectional I2C goes through an open-drain bridge whose release and freedom from deadlock are formally proven. Every result is repeatable, because each change lands on an exact cycle.
 
-> **Why this order (2026-11-05):** a keyword scan of 22 public entrants' READMEs found provable timing, on-chip logic analysers and protocol learning already in use, but no inline traffic alteration and no open-drain bridge. It is a README scan, so it can't rule out private work or unstated features. Lead with what appears to be unique.
-
-**Three modes, one engine:**
-
-| Mode | What it does | Real use |
-|---|---|---|
-| **Emulate** | Engine drives/reads pins directly (baseline bit-banging) | Talk to any UART/SPI/I2C device |
-| **Observe** | Transparent pass-through A↔B + timestamped edge capture | Sniff traffic between two chips without cutting traces |
-| **Interpose** | Engine controls each line's pass-through mux cycle-exactly | Flip/drop/inject bits; rewrite bytes; fuzz a device's error handling |
-
----
+> **Status of these claims (2026-11-06):** this is the target for the finished chip. So far it is backed by a cycle-exact model and synthesis sketches, not RTL or silicon, and the bridge proof doesn't exist yet (planned for week 8). Anything still untrue at submission has to come out of this paragraph.
+>
+> **Why this order:** the organisers say flexibility is the main thing they look at, followed by which protocols are shown, what's unique, and how it was designed and verified. So the pitch proves flexibility first and uses interposing as the differentiator. A keyword scan of 22 public entrants' READMEs found provable timing, on-chip logic analysers and protocol learning already in use, but no inline traffic alteration and no open-drain bridge. It's a README scan, so it can't rule out private work or unstated features.
 
 ### What the organisers look for
 From their update email: there is no fixed weighting, and **flexibility is the main thing: can the chip be reprogrammed for protocols it wasn't designed for?** Beyond that, they look at which protocols are demonstrated, anything unique the architecture makes possible, and how it was designed and verified. Around four designs are planned for tape-out.
@@ -265,5 +257,5 @@ Host software (Python): assembler, loader, CLI (`splice load/run/capture/decode`
 - [ ] Does 6x4 fit engine + fabric + capture? (synth early, week 1–3)
 - [ ] 8x4 approval from Jane Street (would relax area)
 - [ ] Exact pass-through latency through TT's pin mux (GL sim + reading TT mux docs)
-- [ ] ODB holdoff length vs bus capacitance/rise time
+- [ ] ODB holdoff: must be programmable. In the model no fixed value covers both 1000 ns rise at 100 kHz (needs 64+ cycles) and 400 kHz (48 or fewer). Real thresholds are untested
 - [ ] Use engine count = 1. A second engine (full-duplex rewrite) only if area allows.
