@@ -74,7 +74,10 @@ V3.update({
     "SRI": (4, {"v": 8, "sh": 4}),
 })
 
-V3["TSRC"] = (8, {"line": L, "want": 1})
+V3["TSRC"] = (8, {"line": L, "want": 2})
+V3["TSTB"] = (8, {})  # flexibility study: test the next output bit
+V3["CALL"] = (4, {"to": 9})  # flexibility study: one-level call with a link register
+V3["RET"] = (8, {})
 
 # V4: V3 plus hardware rules. ARM reads delay and width from registers.
 V4 = dict(V3)
@@ -84,7 +87,12 @@ V4.update({"ARM": (5, {"rule": 1, "trig": 3, "c": 1, "line": 3, "src": 3})})
 V7 = dict(V4)
 V7.update({"MATCH": (5, {"rule": 1, "trig": 3, "line": 3, "src": 4})})
 
-VARIANTS = {"V0": V0, "V1": V1, "V2": V2, "V3": V3, "V4": V4, "V5": V4, "V7": V7}
+# V8: V3 plus line-coding hardware: CRC, bit stuffing, NRZI, Manchester, arbitration.
+V8 = dict(V3)
+V8.update({"CODE": (6, {"mode": 4, "n": 3, "pair": 3}), "CRCSR": (8, {"inv": 1, "keep": 1, "shift": 1}),
+           "CODE2": (6, {"mode": 4, "n": 3, "pair": 3})})
+
+VARIANTS = {"V8": V8, "V0": V0, "V1": V1, "V2": V2, "V3": V3, "V4": V4, "V5": V4, "V7": V7}
 
 
 def kraft(table):

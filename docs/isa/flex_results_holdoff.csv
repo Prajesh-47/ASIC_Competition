@@ -1,0 +1,11 @@
+rate,rise,h0,h1,h2,h4,h8,h16,h24,h32,h48,h64,h96,h128,h192
+100k,0,False,False,True,True,True,True,True,True,True,True,True,True,True
+100k,5,False,False,False,False,True,True,True,True,True,True,True,True,True
+100k,15,False,False,False,False,False,False,True,True,True,True,True,True,True
+100k,25,False,False,False,False,False,False,False,True,True,True,True,True,True
+100k,50,False,False,False,False,False,False,False,False,False,True,True,True,True
+400k,0,False,False,True,True,True,True,True,True,True,False,False,False,False
+400k,5,False,False,False,False,True,True,True,True,True,False,False,False,False
+400k,15,False,False,False,False,False,False,True,True,True,False,False,False,False
+400k,25,False,False,False,False,False,False,False,True,True,False,False,False,False
+400k,50,False,False,False,False,False,False,False,False,False,False,False,False,False

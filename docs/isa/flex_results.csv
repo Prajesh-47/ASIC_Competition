@@ -1,0 +1,26 @@
+protocol,role,config,nominal,words,passes,min_period,all_above_pass,note
+JTAG,controller,Loom,25,23,True,3,True,
+SWD,controller,Loom,25,44,True,4,True,
+PS/2,receiver,Loom,4000,5,True,6,True,
+SPI mode 0,target,Loom,25,12,True,7,True,
+SPI mode 1,target,Loom,25,10,True,6,True,
+SPI mode 2,target,Loom,25,12,True,7,True,
+SPI mode 3,target,Loom,25,10,True,6,True,
+I2C,target,100 kHz,125,27,True,,,
+I2C,target,400 kHz,31,27,True,,,
+Manchester,transmit,Loom,3,14,False,4,True,"half-bit, cycles. 10BASE-T needs 2.5 at 50 MHz"
+Manchester,transmit,Loom+coder,3,6,True,3,True,"half-bit, cycles. 10BASE-T needs 2.5 at 50 MHz"
+USB LS,transmit,Loom,33,59,True,14,True,33 cycles is 1% from 1.5 Mbit/s
+USB LS,transmit,Loom 2ctx,33,59,True,27,True,"second context idle, half rate"
+USB LS,transmit,Loom+coder,33,24,True,4,True,33 cycles is 1% from 1.5 Mbit/s
+USB LS,transmit,Loom+coder 2ctx,33,24,True,8,True,"second context idle, half rate"
+CAN,transmit,Loom,100,58,True,14,True,100 cycles is 500 kbit/s
+CAN arbitration,transmit,Loom,100,58,True,,,competitor wins bit 2: must back off
+CAN,transmit,Loom+coder,100,22,True,8,True,100 cycles is 500 kbit/s
+CAN arbitration,transmit,Loom+coder,100,22,True,,,competitor wins bit 2: must back off
+I2C bridge,interpose,100 kHz,125,5,True,,,"pass-through, rise 50 cycles"
+I2C bridge,interpose,100 kHz stretch,125,5,True,,,target stretches SCL 8 us
+I2C NACK,interpose,100 kHz,125,12,True,,,"3rd ACK forced to NACK; acks seen [0, 0, 1, 0]"
+I2C bridge,interpose,400 kHz,31,5,True,,,"pass-through, rise 15 cycles"
+I2C bridge,interpose,400 kHz stretch,31,5,True,,,target stretches SCL 8 us
+I2C NACK,interpose,400 kHz,31,12,True,,,"3rd ACK forced to NACK; acks seen [0, 0, 1, 0]"

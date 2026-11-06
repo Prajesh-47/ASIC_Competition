@@ -34,3 +34,20 @@ Spec gap: frame holdoff,Found by test,measured,Flip re-triggers on data edges,Fi
 Rule: set value before MODE,Found by test,measured,SCK glitch at startup otherwise,Firmware rule,Reset value of eng registers should also be decided
 Harness error: SPI startup edge,Found by decoder mismatch,measured,Gave a false pass at high speed,Fixed,Why the negative controls exist
 Analysis error: idle polling counted as OoO gain,Found by review,measured,Showed false 1.5x speedup,Fixed,Trace now limited to real work
+JTAG controller,Flexibility study,measured,23 words; half period 3,Works on Loom,Against a 16-state TAP model
+SWD controller,Flexibility study,measured,44 words including bus turnaround,Works on Loom,
+PS/2 receive,Flexibility study,measured,5 words; device-clocked with tick source,Works on Loom,
+SPI target modes 0-3,Flexibility study,measured,10-12 words; 3.6-4.2 MHz limit,Works on Loom,Control exposed a weak master model; fixed
+I2C target,Flexibility study,measured,27 words at 100 and 400 kHz,Works on Loom,
+CAN transmit with arbitration,Flexibility study,measured,58 words in software; 22 with coder,Works on Loom,Transmit only
+USB low speed transmit,Flexibility study,measured,59 words; bit 14 or 27 with two contexts; 33 needed,Works on Loom,Transmit only; no real host
+10 Mbit Ethernet transmit,Flexibility study,measured for Manchester only,Software half-bit 4; coder 3; needs 2.5 at 50 MHz,Needs coder and 60 MHz,Receive not attempted
+WS2812,Held-out test,measured,18 words; no ISA change,Works on Loom,Written after the instruction list was fixed
+1-Wire,Held-out test,measured,41 words; no ISA change,Works on Loom,Written after the instruction list was fixed
+I2C open-drain bridge,Spec section 4.1,measured in model,Passes with clock stretching; holdoff has a window,Works with programmable holdoff,No formal proof yet
+Force I2C NACK through the bridge,Spec demo 2,measured in model,12 words at 100 and 400 kHz,Works,3rd ACK becomes NACK and the target still sees every byte
+Fixed bridge holdoff,Spec section 4.1,measured in model,No value covers 1000 ns rise at 100 kHz and 400 kHz,Reject,Needs 64+ and 48- respectively
+CALL and RET,Found writing CAN and USB,measured,Shared bit routine; about 1.1K um2,Adopt,One level only
+TSTB and shift flag,Found writing CAN and USB,measured,Needed for software CRC and stuffing,Adopt,
+Line coder: CRC stuffing NRZI Manchester arbitration,Organisers' guidance,measured,Programs about 60% smaller; about 8.5K um2,Build but first to cut,Supersedes the spec CRC opcode
+60 MHz clock for Ethernet,Own,reasoned,Gives a whole-cycle half-bit,Open,Timing untested

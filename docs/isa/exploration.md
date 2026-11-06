@@ -7,6 +7,8 @@ written, and all of this is on the local branch `exp/isa-lab`.
 - [`experiments.csv`](experiments.csv): every idea considered, tried or rejected, and why.
 - [`../../lab/isa/`](../../lab/isa/): the test bench, to reproduce all of it.
 
+> **Update, 2026-11-06:** the organisers say flexibility is the main thing they look at, so I ran a second study. See [`flexibility.md`](flexibility.md), which adds to this recommendation and supersedes parts of the proposed ISA below.
+
 ## Recommendation
 
 **Choose candidate B, "Loom-2".** It is the spec's engine plus fused bit instructions, a bit timer whose

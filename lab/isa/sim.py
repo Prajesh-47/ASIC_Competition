@@ -13,7 +13,7 @@ Timing rules, shared by all variants:
 """
 from dataclasses import dataclass, field
 
-HIZ, ENG, PASS, INV, F0, F1 = "HIZ", "ENG", "PASS", "INV", "F0", "F1"
+HIZ, ENG, PASS, INV, F0, F1, ODB = "HIZ", "ENG", "PASS", "INV", "F0", "F1", "ODB"
 
 
 class Infeasible(Exception):
@@ -56,6 +56,27 @@ class Core:
         self.tstamp = 0
         self.tsrc = None
         self.last = [1] * 12
+        self.lr = 0
+        # Optional line-coding hardware (variant V8)
+        self.crc = 0
+        self.poly = 0
+        self.crc_on = False
+        self.crc_top = 15
+        self.stuff_n = 0  # insert a bit after this many equal bits, 0 = off
+        self.stuff_ones = False  # USB counts ones only and inserts a 0; CAN counts either level
+        self.run_len = 0
+        self.run_val = None
+        self.stuff_pending = None
+        self.nrzi = False
+        self.level = 1
+        self.manchester = False
+        self.half = None
+        self.pair_line = None  # driven with the complement on the same edge
+        self.arb_at = 0
+        self.arb_cnt = 0
+        self.arb_drv = 1
+        self.arb_line = None
+        self.lost = False
         self.dead = 0
         self.t = 0
         self.fifo_rx = []  # engine to host
@@ -69,7 +90,8 @@ class Core:
         self.t = (self.t + 1) & 0xFFFF
         if self.tsrc is not None:  # follow an input edge instead of the period timer
             line, want = self.tsrc
-            if self.chip.prev[line] != want and self.chip.s2[line] == want:
+            changed = self.chip.prev[line] != self.chip.s2[line]
+            if changed and (want is None or self.chip.s2[line] == want):
                 if self.tick_pending:
                     self.missed += 1
                     self.F = 1
@@ -86,6 +108,12 @@ class Core:
 
     def step(self, s2, prev):
         self.timer()
+        if self.arb_cnt:
+            self.arb_cnt -= 1
+            if self.arb_cnt == 0 and self.arb_drv == 1 and s2[self.arb_line] == 0:
+                self.lost = True
+                self.F = 1
+                self.chip.eng[self.arb_line] = 1
         if self.halted:
             return
         if self.div > 1:
@@ -112,6 +140,67 @@ class Core:
         if ins.side is not None:  # a side-set lands with its tick, or at once if it has none
             self.chip.eng[self.side_line] = ins.side
         self.execute(ins, s2, prev)
+
+    def coded(self):
+        return self.stuff_n or self.crc_on or self.nrzi or self.manchester or self.arb_at
+
+    def drive(self, line, val):
+        self.chip.eng[line] = val
+        if self.pair_line is not None:
+            self.chip.eng[self.pair_line] = 1 - val
+
+    def wire(self, line, bit):
+        """Put a logical bit on the wire through the line coder."""
+        if self.lost:
+            self.chip.eng[line] = 1
+            return
+        if self.nrzi:
+            if bit == 0:
+                self.level ^= 1
+            self.drive(line, self.level)
+        else:
+            self.drive(line, bit)
+        self.arb_drv, self.arb_line, self.arb_cnt = bit, line, self.arb_at
+
+    def coded_out(self, line):
+        """One tick of coded output. True when a payload bit was consumed."""
+        if self.manchester and self.half is not None:  # second half-bit is the complement
+            self.drive(line, 1 - self.half)
+            self.half = None
+            return True
+        if self.stuff_pending is not None:
+            self.wire(line, self.stuff_pending)
+            self.run_val = self.stuff_pending
+            self.run_len = 0 if self.stuff_ones else 1
+            self.stuff_pending = None
+            return False
+        bit = self.sbit()
+        if self.crc_on:
+            if self.msb_first:
+                fb = bit ^ ((self.crc >> self.crc_top) & 1)
+                self.crc = (self.crc << 1) & ((1 << (self.crc_top + 1)) - 1)
+            else:
+                fb = bit ^ (self.crc & 1)
+                self.crc >>= 1
+            if fb:
+                self.crc ^= self.poly
+        if self.manchester:
+            self.drive(line, bit)
+            self.half = bit
+            self.shift_out()
+            return False
+        self.wire(line, bit)
+        self.shift_out()
+        if self.stuff_n:
+            if self.stuff_ones:
+                self.run_len = self.run_len + 1 if bit else 0
+            else:
+                self.run_len = self.run_len + 1 if bit == self.run_val else 1
+                self.run_val = bit
+            if self.run_len == self.stuff_n:
+                self.stuff_pending = 0 if self.stuff_ones else 1 - bit
+                self.run_len = 0
+        return self.stuff_pending is None
 
     def sbit(self):
         return (self.SR >> 15) & 1 if self.msb_first else self.SR & 1
@@ -186,10 +275,17 @@ class Core:
             if self.BC != 0:
                 next_pc = a["to"]
         elif op == "OUTB":  # fused: drive, shift, loop while bits remain
-            chip.eng[a["line"]] = self.sbit()
-            self.shift_out()
-            if self.BC != 0:
-                next_pc = a["to"]
+            if self.coded():
+                done = self.coded_out(a["line"])
+                if not done:
+                    next_pc = self.pc  # a stuffed bit or second half-bit: same instruction again
+                elif self.BC != 0:
+                    next_pc = a["to"]
+            else:
+                chip.eng[a["line"]] = self.sbit()
+                self.shift_out()
+                if self.BC != 0:
+                    next_pc = a["to"]
         elif op == "LDI":
             self.R[a["r"]] = (self.R[a["r"]] & 0xFF) | (a["hi"] << 8) if "hi" in a else a["v"] & 0xFF
         elif op == "BCI":  # load the bit counter directly
@@ -217,10 +313,32 @@ class Core:
             self.Z = int(self.read(a["a"]) == self.read(a["b"]))
         elif op == "CMPI":
             self.Z = int(self.read(a["a"]) == a["v"])
-        elif op == "SHR":
+        elif op == "SHR":  # the bit shifted out lands in F
+            self.F = self.R[a["r"]] & 1
             self.R[a["r"]] >>= 1
         elif op == "SHL":
+            self.F = (self.R[a["r"]] >> 15) & 1
             self.R[a["r"]] = (self.R[a["r"]] << 1) & 0xFFFF
+        elif op == "TSTB":  # Z = the bit OUT would drive next
+            self.Z = self.sbit()
+        elif op == "CALL":
+            self.lr = next_pc
+            next_pc = a["to"]
+        elif op == "RET":
+            next_pc = self.lr
+        elif op == "CODE":  # configure the line-coding hardware
+            for k, v in a.items():
+                setattr(self, k, v)
+            self.run_len, self.run_val, self.stuff_pending, self.half = 0, None, None, None
+        elif op == "CODE2":  # start a CRC partway through a frame, keeping the run state
+            for k, v in a.items():
+                setattr(self, k, v)
+        elif op == "CRCSR":  # load SR from the CRC, optionally inverted
+            val = self.crc ^ a.get("xor", 0)
+            if a.get("shift"):  # left align a CRC narrower than SR
+                val <<= 1
+            self.SR = val & 0xFFFF
+            self.crc_on = a.get("keep", False)
         elif op == "JMP":
             if self.cond(a["c"]):
                 next_pc = a["to"]
@@ -311,6 +429,9 @@ class Chip:
         self.cycle = 0
         self.barrel = False
         self.fast_pass = False  # experiment: PASS taps the first synchronizer flop
+        self.odb = {}  # pair (low line) -> bridge state, spec section 4.1
+        self.holdoff = 8
+        self.odb_log = []
 
     def add(self, core):
         self.cores.append(core)
@@ -391,9 +512,34 @@ class Chip:
                 if rule["cnt"] <= 0:
                     rule["state"] = "armed" if a.get("rearm") else "done"
 
+    def run_bridges(self):
+        """Open-drain bridge FSM from spec section 4.1. Sides are line x and line x^4."""
+        for a in range(4):
+            b = a + 4
+            if self.src[a] != ODB and self.src[b] != ODB:
+                continue
+            st = self.odb.setdefault(a, {"state": "IDLE", "cnt": 0})
+            la, lb = self.s2[a], self.s2[b]
+            if st["state"] == "IDLE":
+                if la == 0:  # both low at once picks A
+                    st["state"] = "A_HOLDS"
+                elif lb == 0:
+                    st["state"] = "B_HOLDS"
+            elif st["state"] == "A_HOLDS":
+                if la == 1:
+                    st["state"], st["cnt"] = "HOLDOFF", self.holdoff
+            elif st["state"] == "B_HOLDS":
+                if lb == 1:
+                    st["state"], st["cnt"] = "HOLDOFF", self.holdoff
+            elif st["state"] == "HOLDOFF":
+                st["cnt"] -= 1
+                if st["cnt"] <= 0:
+                    st["state"] = "IDLE"
+
     def tick(self, inputs):
         """Advance one clock. `inputs` holds the level at each of the 12 input pins."""
         self.run_rules()
+        self.run_bridges()
         if self.barrel:  # thread interleaving: each engine executes every second cycle
             for i, core in enumerate(self.cores):
                 if self.cycle % len(self.cores) == i:
@@ -418,6 +564,10 @@ class Chip:
                 val = 0
             elif source == F1:
                 val = 1
+            elif source == ODB:
+                st = self.odb.get(min(x, partner), {"state": "IDLE"})["state"]
+                drive_low = (st == "A_HOLDS" and x >= 4) or (st == "B_HOLDS" and x < 4)
+                val = 0 if drive_low else None
             if x in self.odrain and val == 1:
                 val = None
             self.out[x] = val

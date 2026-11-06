@@ -34,6 +34,12 @@ module sketch (
 `ifdef F_TSRC
       ^ {12'd0, ts_edge, 3'd0}
 `endif
+`ifdef F_CALL
+      ^ {7'd0, lr}
+`endif
+`ifdef F_CODER
+      ^ crc ^ {15'd0, st_p ^ arb_lost ^ level}
+`endif
 `ifdef F_MATCH
       ^ {8'd0, mt_sr[0]} ^ {mt_sr[1], 8'd0} ^ {15'd0, mt_hit[0] ^ mt_hit[1]}
 `endif
@@ -87,7 +93,13 @@ module sketch (
   wire [8:0] fused_to = pc;
 `endif
   wire hold = stalling || tick_block || (opc == 4'h3 && !wait_met);
+`ifdef F_CALL
+  wire is_call = opc == 4'hC && dout[11];
+  wire is_ret  = opc == 4'hC && dout[10];
+  assign next_pc = hold ? pc : is_ret ? lr : (is_jmp || is_call) ? dout[8:0] : is_fused ? fused_to : pc + 9'd1;
+`else
   assign next_pc = hold ? pc : is_jmp ? dout[8:0] : is_fused ? fused_to : pc + 9'd1;
+`endif
 
 `ifdef F_NS
   wire ns = dout[8];
@@ -116,6 +128,20 @@ module sketch (
   reg [2:0]  ra_st[0:1];
   reg        ra_e [0:1];
   integer ri;
+`endif
+`ifdef F_CALL
+  reg [8:0] lr;  // one-level link register, for CALL and RET
+`endif
+`ifdef F_CODER
+  // Line coding on the output path: CRC, bit stuffing, NRZI, Manchester half-bit, arbitration.
+  reg [15:0] crc, poly;
+  reg [2:0]  stuff_n, run_len;
+  reg [15:0] arb_at, arb_cnt;
+  reg        crc_on, crc_msb, stuff_one, nrzi, level, manch, half_p, half_v, st_p, run_v, arb_lost;
+  reg [3:0]  pair_line;
+  wire       code_bit = sr[15];
+  wire       crc_fb = code_bit ^ (crc_msb ? crc[15] : crc[0]);
+  wire [15:0] crc_nx = (crc_msb ? {crc[14:0], 1'b0} : {1'b0, crc[15:1]}) ^ (crc_fb ? poly : 16'd0);
 `endif
 `ifdef F_MATCH
   // Per direction: a byte sampler with its own bit timer, plus pattern and mask comparison.
@@ -163,6 +189,14 @@ module sketch (
         ra_c[ri] <= 0; ra_d[ri] <= 0; ra_w[ri] <= 0; ra_h[ri] <= 0; ra_t[ri] <= 0;
         ra_l[ri] <= 0; ra_s[ri] <= 0; ra_sv[ri] <= 0; ra_st[ri] <= 0; ra_e[ri] <= 0;
       end
+`endif
+`ifdef F_CALL
+      lr <= 0;
+`endif
+`ifdef F_CODER
+      crc <= 0; poly <= 0; stuff_n <= 0; run_len <= 0; arb_at <= 0; arb_cnt <= 0; crc_on <= 0;
+      crc_msb <= 0; stuff_one <= 0; nrzi <= 0; level <= 1; manch <= 0; half_p <= 0; half_v <= 0;
+      st_p <= 0; run_v <= 0; arb_lost <= 0; pair_line <= 0;
 `endif
 `ifdef F_MATCH
       for (mi = 0; mi < 2; mi = mi + 1) begin
@@ -289,6 +323,38 @@ module sketch (
           default: ;
         endcase
       end
+`ifdef F_CALL
+      if (opc == 4'hC && dout[11]) lr <= pc + 9'd1;
+`endif
+`ifdef F_CODER
+      if (opc == 4'h3 && dout[3:0] == 4'hF) begin  // load configuration from the registers
+        poly <= r1;
+        crc <= r0;
+        arb_at <= r2;
+        {crc_on, crc_msb, stuff_one, nrzi, manch} <= dout[8:4];
+        stuff_n <= dout[11:9];
+        pair_line <= r3[3:0];
+      end
+      if (opc == 4'h7 && !stalling) begin  // each output bit passes through the coder
+        if (crc_on) crc <= crc_nx;
+        if (manch) begin
+          half_p <= !half_p;
+          half_v <= code_bit;
+        end
+        if (nrzi && !code_bit) level <= !level;
+        if (st_p) st_p <= 0;
+        else if (run_v == code_bit || stuff_one) begin
+          run_len <= run_len + 3'd1;
+          if (run_len == stuff_n - 3'd1) st_p <= 1;
+        end else run_len <= 3'd1;
+        run_v <= code_bit;
+        arb_cnt <= arb_at;
+        eng_out[pair_line % 12] <= !(nrzi ? level : (half_p ? !half_v : code_bit));
+      end else if (arb_cnt != 0) begin
+        arb_cnt <= arb_cnt - 16'd1;
+        if (arb_cnt == 1 && run_v && !line_in[lf]) arb_lost <= 1;
+      end
+`endif
 `ifdef F_MATCH
       if (opc == 4'hD && dout[0]) begin
         mt_period[dout[11]] <= r0;
