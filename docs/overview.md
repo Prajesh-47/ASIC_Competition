@@ -97,11 +97,10 @@ compared are in [spec section 7.3](architecture.md#73-decision-two-macros-not-on
 
 ## What is still uncertain
 
-- **SRAM acceptance:** assumed, not confirmed. Jane Street's post recommends SRAM for instruction
-  memory, and our test build passes the flow's checks, but no SRAM has been found on a past CMOS5L
-  shuttle. If it is refused, the latch fallback above applies.
-- **SRAM on real chips:** the only silicon report we found is from the related SG13G2 process, not
-  CMOS5L.
+- **SRAM acceptance:** confirmed. The organisers say IHP SRAM macros may be used, including more than
+  one, if they fit and pass precheck.
+- **SRAM on real chips:** unproven on this process. CMOS5L has no silicon back yet, and the only silicon
+  report we found is from the related SG13G2 process.
 - **Area figures:** these are synthesis estimates from an older local tool version. The method landed
   within 3% of the real flow on the placeholder, but that design contains no memory, so the memory
   numbers have not been confirmed by a full build.

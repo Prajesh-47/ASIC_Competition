@@ -21,6 +21,13 @@ SPLICE sits **inline on a live bus between two chips** and alters traffic as it 
 
 ---
 
+### What the organisers look for
+From their update email: there is no fixed weighting, and **flexibility is the main thing: can the chip be reprogrammed for protocols it wasn't designed for?** Beyond that, they look at which protocols are demonstrated, anything unique the architecture makes possible, and how it was designed and verified. Around four designs are planned for tape-out.
+
+**Required at submission:** public repo with RTL and tests, passing GDS and precheck from the Tiny Tapeout flow, architecture and instruction set documentation, assembler or toolchain with example programs, a verification write-up, and a description of how AI tools were used. A video is optional.
+
+---
+
 ## 2. Top-level block diagram
 
 ```
@@ -68,7 +75,7 @@ SPLICE sits **inline on a live bus between two chips** and alters traffic as it 
 Protocol fits (interpose): UART = 2 pairs (TX, RX) · I2C = 2 pairs (SCL, SDA) · SPI = 4 pairs (SCK, MOSI, MISO, CS) — uses all.
 Emulate mode: all 8 uio are plain GPIO + 4 AUX outs.
 
-**Electrical limits (TT spec):** output ≤ 33 MHz, input ≤ 66 MHz, 4 mA drive, pads not 5 V tolerant, ~20 ns worst pad round-trip. I2C needs external pull-ups on **both** A and B sides.
+**Electrical limits (TT spec, provisional: the organisers say there are no characterized CMOS5L pad numbers yet):** output ≤ 33 MHz, input ≤ 66 MHz, 4 mA drive, pads not 5 V tolerant, ~20 ns worst pad round-trip. I2C needs external pull-ups on **both** A and B sides.
 
 ---
 
@@ -145,7 +152,7 @@ Sizes to sanity-check: UART TX ≈ 10–15 instr, UART RX ≈ 15, SPI master ≈
 
 ## 7. Memory
 - **Decision (approved and hardened 2026-11-05):** two separate single-port SRAM macros: `RM_IHPSG13_1P_256x16` for program and `RM_IHPSG13_1P_512x16` for capture. See section 7.3.
-- **Assumption:** macros are accepted on the CMOS5L shuttle. The organisers have not been asked; the author chose to proceed on the evidence in section 7.2. No CMOS5L silicon result was found.
+- **Accepted:** the organisers' update email says IHP SRAM macros may be used, including more than one, if they fit and pass precheck. CMOS5L has no silicon back yet, so macro behaviour on this process is unproven.
 - Fallback: latch RAM — 128×16 program + 64×16 capture. Architecture must work at either size (address widths parameterised).
 
 ### 7.1 Area probe (yosys 0.33, typ corner, synthesis only)
@@ -174,7 +181,7 @@ Calibration: the same script on the stub gives 150 cells / 2,221 µm², against 
 - **Shuttle:** no macro found on CMOS5L shuttle TTIHP 0.4. Macros are found on SG13G2 shuttles 26a and 26b.
 - **Silicon:** one user report of a `1024x8` test on SG13G2 (TTIHP 0.2). No CMOS5L silicon result found.
 - **Our harden:** both macros pass gds, precheck and gate-level tests with our own power step (CI run 42076994258, stub plus self-test). See `macro/README.md`, including 15 slew and capacitance violations at macro pins still to clear.
-- **Acceptance:** assumed, not confirmed. The competition post recommends SRAM for instruction memory and links a macro example, though that example is on SG13G2.
+- **Acceptance:** confirmed by the organisers' update email. An independent walkthrough ([IHP SRAM macro on a CMOS5L tile](https://kdp1965.github.io/ihp-um-janestreet-prism/ihp_sram_macro.html)) reports the same Metal4 obstruction bar and the same absence of real metal under it that `flow/check_macro_columns.py` found.
 
 | Macro | Size (µm) | µm² | % of die | µm²/bit |
 |---|---|---:|---:|---:|
@@ -250,7 +257,9 @@ Host software (Python): assembler, loader, CLI (`splice load/run/capture/decode`
 
 ## 12. Open questions / risks
 - [x] SRAM macro integration on CMOS5L: hardened (section 7.2)
-- [ ] Macro acceptance on the CMOS5L shuttle: assumed, not confirmed
+- [x] Macro acceptance on the CMOS5L shuttle: confirmed by the organisers
+- [ ] Pad characterisation: none exists yet for CMOS5L, so treat the electrical limits in section 3 as provisional
+- [ ] Program reload: a deselected design powers down and loses its state, so the host must reload after selection
 - [ ] Slew and capacitance violations at macro pins: clear in the real design (`macro/README.md`)
 - [x] Unified single-port memory conflicts with fixed cycle counts: resolved with two macros (section 7.3)
 - [ ] Does 6x4 fit engine + fabric + capture? (synth early, week 1–3)
