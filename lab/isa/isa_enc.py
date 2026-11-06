@@ -78,6 +78,7 @@ V3["TSRC"] = (8, {"line": L, "want": 2})
 V3["TSTB"] = (8, {})  # flexibility study: test the next output bit
 V3["CALL"] = (4, {"to": 9})  # flexibility study: one-level call with a link register
 V3["RET"] = (8, {})
+V3["TPHASE"] = (8, {"mode": 2})  # restart the timer phase: from a preset or from R1
 
 # V4: V3 plus hardware rules. ARM reads delay and width from registers.
 V4 = dict(V3)

@@ -18,10 +18,9 @@ Plain-language overview: [`docs/overview.md`](docs/overview.md) · Architecture 
 
 ## Status
 
-Week 1: repo scaffolded from `TinyTapeout/ttihp-verilog-template@cmos5l`. Top is a stub
-(heartbeat + safe hi-Z reset state) that proves the RTL → GDS flow. Memory decision: two IHP SRAM
-macros, 256x16 program + 512x16 capture, hardened with a self-test in place of the engine
-(`docs/architecture.md` section 7). No engine RTL yet.
+Stub with an SRAM self-test passes the full flow, with two IHP SRAM macros (256x16 program, 512x16
+capture). ISA v1 is approved (`docs/architecture.md` section 5), proven in a cycle-exact model only.
+Next: golden model and assembler. No engine RTL yet.
 
 ## Repository layout
 
@@ -32,10 +31,12 @@ macros, 256x16 program + 512x16 capture, hardened with a self-test in place of t
 | `docs/info.md` | Tiny Tapeout datasheet page |
 | `docs/architecture.md` | SPLICE architecture spec |
 | `docs/overview.md` | Plain-language summary of the project and its status |
+| `docs/isa/` | ISA studies, results sheets, and everything tried |
 | `docs/ai-log.md` | What was AI-written and how it was independently checked |
 | `info.yaml` | TT project config (tiles, pinout, sources) |
 | `macro/` | IHP SRAM macro views, integration notes, and the evidence for each disabled flow check |
 | `flow/` | Our power step for the macros and a GDS check of it |
+| `lab/isa/` | Test bench behind the ISA studies. Lab code, not the golden model |
 | `model/` | Placeholder: Python golden model + assembler |
 | `formal/` | Placeholder: SymbiYosys proofs |
 | `host/` | Placeholder: CLI, sigrok export |
