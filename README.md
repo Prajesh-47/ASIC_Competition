@@ -18,10 +18,10 @@ Plain-language overview: [`docs/overview.md`](docs/overview.md) · Architecture 
 
 ## Status
 
-**First working engine.** A program loaded over SPI after reset drives exact UART frames, and the same
-netlist then runs SPI, UART RX and I2C with no reset, plus an inline bit flip and two contexts at once.
-Random programs match the golden model on every output pin, every cycle. Not built yet: the capture
-unit and open-drain bridge. Nothing has been on silicon.
+**All main blocks exist in RTL:** engine, SPI loader, line fabric, open-drain bridge, capture unit. Programs
+loaded over SPI run UART, SPI, I2C, JTAG, SWD, PS/2, WS2812, 1-Wire, CAN and low-speed USB, in simulation on
+the same netlist. CAN and USB are transmit only. The I2C bridge can force a NACK and is formally proven for
+specific rise and holdoff values. Nothing has been on silicon, and pad numbers don't exist yet for CMOS5L.
 
 ## Repository layout
 
@@ -39,8 +39,8 @@ unit and open-drain bridge. Nothing has been on silicon.
 | `flow/` | Our power step for the macros and a GDS check of it |
 | `lab/isa/` | Test bench behind the ISA studies. Lab code, not the golden model |
 | `model/` | Golden model, assembler and example firmware |
-| `formal/` | Placeholder: SymbiYosys proofs |
-| `host/` | Placeholder: CLI, sigrok export |
+| `formal/` | Formal proofs |
+| `host/` | SPI command library and VCD export. No board connection or CLI yet |
 
 ## Running tests locally
 

@@ -16,7 +16,7 @@ module splice_engine (
     input  wire [8:0]  ctx1_pc,
 
     // Program memory. Read data arrives the cycle after the address.
-    input  wire [15:0] ins,
+    input  wire [15:0] mem_data,
     output wire [8:0]  fetch_addr,
 
     // Synchronized input lines, and the same lines one cycle earlier
@@ -38,7 +38,10 @@ module splice_engine (
     output reg         running,
     output reg  [1:0]  halted,
     output reg         irq,
-    output reg         trig
+    output reg         trig,
+    output wire        cap_on,
+    output wire        cap_off,
+    output wire        cap_mark
 );
 
   // ------------------------------------------------------------------ State, per context
@@ -70,6 +73,10 @@ module splice_engine (
 
   wire c = cur;
 
+  // Only decode memory output while executing. It's undefined before the first read, and this keeps
+  // that from reaching any logic, on silicon as well as in gate-level simulation.
+  wire [15:0] ins = (running && !prim) ? mem_data : 16'd0;
+
   // Lines 12-15 don't exist: they read as 1 and ignore writes.
   wire [15:0] lines = {4'hF, lines_in};
   wire [15:0] plines = {4'hF, lines_prev};
@@ -93,7 +100,7 @@ module splice_engine (
       O_CMPI = 16, O_AND = 17, O_BCI = 18, O_CMP = 19, O_DLYR = 20, O_HALT = 21, O_IRQ = 22, O_MOV = 23,
       O_MSB = 24, O_PROBE = 25, O_PULL = 26, O_PULLW = 27, O_PUSH = 28, O_RET = 29, O_SIDE = 30,
       O_TPHASE = 31, O_TRIG = 32, O_TSRC = 33, O_TSTB = 34, O_WAITT = 35, O_XOR = 36, O_RAND = 37,
-      O_SHL = 38, O_SHR = 39;
+      O_SHL = 38, O_SHR = 39, O_CAPMARK = 40, O_CAPOFF = 41, O_CAPON = 42;
 
   reg [5:0]  op;
   reg        tick_q;
@@ -151,6 +158,9 @@ module splice_engine (
       16'b110000??????????: op = O_CMPI;
       16'b11001101????????: op = O_AND;
       16'b11001110????????: op = O_BCI;
+      16'b11001111????????: op = O_CAPMARK;
+      16'b11010000????????: op = O_CAPOFF;
+      16'b11010001????????: op = O_CAPON;
       16'b11010010????????: op = O_CMP;
       16'b11010011????????: op = O_DLYR;
       16'b11010100????????: op = O_HALT;
@@ -180,7 +190,7 @@ module splice_engine (
       16'b1110010100??????: op = O_RAND;
       16'b1110010101??????: op = O_SHL;
       16'b1110010110??????: op = O_SHR;
-      default: op = O_NOP;  // capture controls and reserved encodings do nothing yet
+      default: op = O_NOP;  // reserved encodings do nothing
     endcase
   end
 
@@ -309,6 +319,9 @@ module splice_engine (
   assign h2e_pop = ex && (op == O_PULLW || (op == O_PULL && !h2e_empty));
   assign e2h_push = ex && op == O_PUSH;
   assign e2h_data = sr[c];
+  assign cap_on = ex && op == O_CAPON;
+  assign cap_off = ex && op == O_CAPOFF;
+  assign cap_mark = ex && op == O_CAPMARK;
 
   // ------------------------------------------------------------------ Clocked state
   wire [15:0] alu_add = rr[{c, rn_add}] + {8'd0, ins[7:0]};

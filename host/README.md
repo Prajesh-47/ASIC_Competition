@@ -1,7 +1,10 @@
 # host/
 
-Placeholder. Planned: the Python host CLI (`splice load/run/capture/decode`) and sigrok/PulseView
-export, running against both RTL simulation and the real board. See `docs/architecture.md`
-section 8.
+Host software for the SPI port (`docs/architecture.md` section 8).
 
-Nothing here yet.
+| File | Contents |
+|---|---|
+| `splice_host/commands.py` | `Board`: load, run, FIFO, registers and capture, over anything with `xfer(bytes) -> bytes` |
+| `splice_host/capture.py` | Turns capture memory into timed edges, and writes VCD, which PulseView opens |
+
+**Not built yet:** a CLI and a connection to the real board. The demo board's microcontroller needs checking first.

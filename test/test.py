@@ -19,6 +19,9 @@ from splice.asm import assemble  # noqa: E402
 from splice.isa import COND, TABLE, encode  # noqa: E402
 from splice.model import Splice  # noqa: E402
 
+sys.path.insert(0, os.path.join(HERE, "..", "host"))
+from splice_host import capture as capture_lib  # noqa: E402
+
 GATE_LEVEL = os.environ.get("GATES") == "yes"
 HALF = 5  # SPI half period in core clocks: SCK is core/10
 UI_IDLE = 0xF4  # AUX_IN high, CS high, SCK and MOSI low
@@ -63,6 +66,19 @@ async def load_program(dut, words, base=0):
 
 async def write_reg(dut, reg, value):
     await spi_xfer(dut, [0x05, reg, value])
+
+
+async def read_reg(dut, reg):
+    return (await spi_xfer(dut, [0x06, reg, 0]))[2]
+
+
+async def read_capture(dut, count, base=0):
+    data = await spi_xfer(dut, [0x04, base >> 8, base & 0xFF] + [0] * (2 * count))
+    return [data[3 + 2 * i] << 8 | data[4 + 2 * i] for i in range(count)]
+
+
+async def capture_pointer(dut):
+    return (await read_reg(dut, 14)) << 8 | await read_reg(dut, 13)
 
 
 async def fifo_write(dut, words):
@@ -269,8 +285,10 @@ async def test_host_registers(dut):
     await reset(dut)
     await write_reg(dut, 1, 0x30)
     await write_reg(dut, 3, 0x2A)
-    assert (await spi_xfer(dut, [0x06, 1, 0]))[2] == 0x30
-    assert (await spi_xfer(dut, [0x06, 3, 0]))[2] == 0x2A
+    await write_reg(dut, 9, 0x5B)
+    assert await read_reg(dut, 1) == 0x30
+    assert await read_reg(dut, 3) == 0x2A
+    assert await read_reg(dut, 9) == 0x5B
 
 
 # ------------------------------------------------------------------ Reprogrammed protocols
@@ -456,7 +474,9 @@ def random_program(rng, length, ctx1):
     park = encode("WAIT", line=PARK_LINE, c=0, stamp=0)
     words = [park, encode("TSET", p=rng.randrange(1, 30))]
     words += [encode("LDI", r=0, hl=0, v=rng.randrange(1, 40)), encode("MOV", d=6, s=0)]  # set a timeout
-    choices = [op for op in TABLE if op not in ("CAPMARK", "CAPOFF", "CAPON")]
+    if rng.random() < 0.7:
+        words.append(encode("CAPON"))
+    choices = list(TABLE)
     while len(words) < length - 1:
         pc = len(words)
         if pc == ctx1:
@@ -511,6 +531,13 @@ def state_differences(dut, model):
             value = int(handle.value)
             if value != want:
                 diffs[f"ctx{k}.{name}"] = (want, value)
+    cap = dut.user_project.capture
+    for name, want, handle in (("cap.active", int(model.cap_active), cap.active), ("cap.ptr", model.cap_ptr, cap.ptr),
+                               ("cap.dt", model.cap_dt, cap.dt), ("cap.pre", model.cap_pre, cap.pre),
+                               ("cap.triggered", int(model.cap_triggered), cap.triggered)):
+        value = int(handle.value)
+        if value != want:
+            diffs[name] = (want, value)
     return diffs
 
 
@@ -521,6 +548,7 @@ async def differential_once(dut, seed, cycles, two):
     ctx1 = length // 2 if two else 0
     words = random_program(rng, length, ctx1 if two else -1)
     odrain, fast = rng.getrandbits(8), rng.getrandbits(8)
+    holdoff = rng.choice([0, 1, 2, 5, 20, 64])
     preload = [rng.getrandbits(16) for _ in range(rng.randrange(0, 5))]
 
     await stop(dut)
@@ -530,6 +558,16 @@ async def differential_once(dut, seed, cycles, two):
     await write_reg(dut, 2, fast)
     await write_reg(dut, 4, 0)
     await write_reg(dut, 5, ctx1)
+    await write_reg(dut, 3, holdoff)
+    watch = rng.getrandbits(16)
+    prescale, cap_mode, post = rng.randrange(0, 6), rng.getrandbits(3) & 0b101, rng.randrange(0, 6)
+    await write_reg(dut, 6, watch & 0xFF)
+    await write_reg(dut, 7, watch >> 8)
+    await write_reg(dut, 8, prescale)
+    await write_reg(dut, 9, 0)
+    await write_reg(dut, 10, cap_mode)
+    await write_reg(dut, 11, post)
+    await write_reg(dut, 12, 0)
     if preload:
         await fifo_write(dut, preload)
     dut.uio_in.value = 0xFF
@@ -543,6 +581,8 @@ async def differential_once(dut, seed, cycles, two):
         model = Splice()
         model.load(words)
         model.two, model.odrain, model.fast, model.ctx1_pc = two, odrain, fast, ctx1
+        model.holdoff = holdoff
+        model.cap_watch, model.cap_prescale, model.cap_mode, model.cap_post = watch, prescale, cap_mode, post
         for word in preload:
             model.host_push(word)
         model.start()
@@ -590,6 +630,20 @@ async def differential_once(dut, seed, cycles, two):
 
     for op, count in models[0].coverage.items():
         COVERAGE[op] = COVERAGE.get(op, 0) + count
+
+    # Capture results are invisible on the pins, so read them back and compare them too.
+    model = models[0]
+    dut.ui_in.value = UI_IDLE
+    dut.uio_in.value = 0xFF
+    await stop(dut)
+    # The STOP command takes many cycles and capture runs until it lands, so the RTL may hold a few more
+    # entries. The state check above compared the pointer while both were in step.
+    pointer = await capture_pointer(dut)
+    assert pointer >= model.cap_ptr or model.cap_wrapped, f"seed {seed}: capture {pointer}, model {model.cap_ptr}"
+    count = min(model.cap_ptr, 12)
+    if count:
+        got = await read_capture(dut, count)
+        assert got == model.cap[:count], f"seed {seed}: capture {got}, model {model.cap[:count]}"
     dut.ui_in.value = UI_IDLE
     dut.uio_in.value = 0xFF
     await ClockCycles(dut.clk, 4)
@@ -616,6 +670,6 @@ async def test_rtl_matches_model_two_contexts(dut):
 @cocotb.test()
 async def test_differential_covered_every_instruction(dut):
     """Passing means nothing for instructions that never ran, so check that they did."""
-    unused = sorted(op for op in TABLE if op not in COVERAGE and op not in ("CAPMARK", "CAPOFF", "CAPON", "HALT"))
+    unused = sorted(op for op in TABLE if op not in COVERAGE and op != "HALT")
     dut._log.info(f"executed instructions: {dict(sorted(COVERAGE.items()))}")
     assert not GATE_LEVEL and not unused or GATE_LEVEL, f"never executed: {unused}"

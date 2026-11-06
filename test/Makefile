@@ -6,7 +6,7 @@ SIM ?= icarus
 FST ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = tt_um_prajesh47_splice.v splice_fifo.v splice_engine.v splice_host.v RM_IHPSG13_1P_256x16_c2_bm_bist.v RM_IHPSG13_1P_512x16_c2_bm_bist.v
+PROJECT_SOURCES = tt_um_prajesh47_splice.v splice_fifo.v splice_engine.v splice_host.v splice_bridge.v splice_capture.v RM_IHPSG13_1P_256x16_c2_bm_bist.v RM_IHPSG13_1P_512x16_c2_bm_bist.v
 
 # PDK SRAM models. They replace the synthesis blackboxes in src/ in both RTL and gate-level runs.
 SRAM_MODEL_DIR ?= $(PWD)/models
@@ -46,7 +46,7 @@ VERILOG_SOURCES += $(PWD)/tb.v
 TOPLEVEL = tb
 
 # List test modules to run, separated by commas and without the .py suffix:
-COCOTB_TEST_MODULES = test
+COCOTB_TEST_MODULES = test,test_protocols,test_capture
 
 # include cocotb's make rules to take care of the simulator setup
 include $(shell cocotb-config --makefiles)/Makefile.sim

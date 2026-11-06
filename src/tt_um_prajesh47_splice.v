@@ -39,7 +39,7 @@ module tt_um_prajesh47_splice (
   wire        start, stop, mem_req, mem_we, mem_cap, reg_we;
   wire [8:0]  mem_addr;
   wire [15:0] mem_wdata, mem_rdata;
-  wire [2:0]  reg_addr;
+  wire [3:0]  reg_addr;
   wire [7:0]  reg_wdata;
   reg  [7:0]  reg_rdata;
   wire        host_push, host_pop, h2e_full, e2h_empty;
@@ -47,6 +47,7 @@ module tt_um_prajesh47_splice (
   wire        spi_miso;
 
   wire        running, irq, trig;
+  wire        engine_cap_on, engine_cap_off, engine_cap_mark;
   wire [1:0]  halted;
   wire        h2e_empty, h2e_pop, e2h_full, e2h_push;
   wire [15:0] h2e_head, e2h_data;
@@ -82,10 +83,19 @@ module tt_um_prajesh47_splice (
   );
 
   // Host registers: 0 mode, 1 open-drain lines, 2 fast pass-through lines, 3 bridge holdoff,
-  // 4 and 5 context 1's start address.
+  // 4 and 5 context 1's start address, 6 and 7 capture's 4 watched lines, 8 and 9 capture prescaler,
+  // 10 capture mode and control, 11 and 12 entries kept after a trigger, 13 and 14 capture write
+  // pointer (read only).
   reg       two_ctx;
   reg [7:0] odrain, fast, holdoff;
   reg [8:0] ctx1_pc;
+  reg [15:0] cap_watch, cap_prescale;
+  reg [2:0]  cap_mode;
+  reg [8:0]  cap_post;
+  wire       cap_active, cap_wrapped, cap_triggered;
+  wire [8:0] cap_ptr;
+  wire       host_cap_on = reg_we && reg_addr == 4'd10 && reg_wdata[7];
+  wire       host_cap_off = reg_we && reg_addr == 4'd10 && reg_wdata[6];
   always @(posedge clk) begin
     if (!rst_n) begin
       two_ctx <= 1'b0;
@@ -93,26 +103,46 @@ module tt_um_prajesh47_splice (
       fast <= 8'd0;
       holdoff <= 8'd64;
       ctx1_pc <= 9'd0;
+      cap_watch <= 16'h3210;
+      cap_prescale <= 16'd0;
+      cap_mode <= 3'd0;
+      cap_post <= 9'd0;
     end else if (reg_we) begin
       case (reg_addr)
-        3'd0: two_ctx <= reg_wdata[0];
-        3'd1: odrain <= reg_wdata;
-        3'd2: fast <= reg_wdata;
-        3'd3: holdoff <= reg_wdata;
-        3'd4: ctx1_pc[8] <= reg_wdata[0];
-        3'd5: ctx1_pc[7:0] <= reg_wdata;
+        4'd0: two_ctx <= reg_wdata[0];
+        4'd1: odrain <= reg_wdata;
+        4'd2: fast <= reg_wdata;
+        4'd3: holdoff <= reg_wdata;
+        4'd4: ctx1_pc[8] <= reg_wdata[0];
+        4'd5: ctx1_pc[7:0] <= reg_wdata;
+        4'd6: cap_watch[7:0] <= reg_wdata;
+        4'd7: cap_watch[15:8] <= reg_wdata;
+        4'd8: cap_prescale[7:0] <= reg_wdata;
+        4'd9: cap_prescale[15:8] <= reg_wdata;
+        4'd10: cap_mode <= reg_wdata[2:0];
+        4'd11: cap_post[7:0] <= reg_wdata;
+        4'd12: cap_post[8] <= reg_wdata[0];
         default: ;
       endcase
     end
   end
   always @* begin
     case (reg_addr)
-      3'd0: reg_rdata = {7'd0, two_ctx};
-      3'd1: reg_rdata = odrain;
-      3'd2: reg_rdata = fast;
-      3'd3: reg_rdata = holdoff;
-      3'd4: reg_rdata = {7'd0, ctx1_pc[8]};
-      3'd5: reg_rdata = ctx1_pc[7:0];
+      4'd0: reg_rdata = {7'd0, two_ctx};
+      4'd1: reg_rdata = odrain;
+      4'd2: reg_rdata = fast;
+      4'd3: reg_rdata = holdoff;
+      4'd4: reg_rdata = {7'd0, ctx1_pc[8]};
+      4'd5: reg_rdata = ctx1_pc[7:0];
+      4'd6: reg_rdata = cap_watch[7:0];
+      4'd7: reg_rdata = cap_watch[15:8];
+      4'd8: reg_rdata = cap_prescale[7:0];
+      4'd9: reg_rdata = cap_prescale[15:8];
+      4'd10: reg_rdata = {cap_active, cap_wrapped, cap_triggered, 2'd0, cap_mode};
+      4'd11: reg_rdata = cap_post[7:0];
+      4'd12: reg_rdata = {7'd0, cap_post[8]};
+      4'd13: reg_rdata = cap_ptr[7:0];
+      4'd14: reg_rdata = {7'd0, cap_ptr[8]};
       default: reg_rdata = 8'd0;
     endcase
   end
@@ -140,7 +170,7 @@ module tt_um_prajesh47_splice (
       .start     (start && rst_n),
       .two_ctx   (two_ctx),
       .ctx1_pc   (ctx1_pc),
-      .ins       (prog_dout),
+      .mem_data  (prog_dout),
       .fetch_addr(fetch_addr),
       .lines_in  (sync2),
       .lines_prev(sync_prev),
@@ -155,7 +185,44 @@ module tt_um_prajesh47_splice (
       .running   (running),
       .halted    (halted),
       .irq       (irq),
-      .trig      (trig)
+      .trig      (trig),
+      .cap_on    (engine_cap_on),
+      .cap_off   (engine_cap_off),
+      .cap_mark  (engine_cap_mark)
+  );
+
+  // ------------------------------------------------------------------ Capture
+  // STOP ends capture but keeps its results, so the host can read them. A new START clears them.
+  reg  [1:0] trig_sync;
+  reg        trig_prev;
+  always @(posedge clk) begin
+    trig_sync <= {trig_sync[0], ui_in[3]};
+    trig_prev <= trig_sync[1];
+  end
+
+  wire        cap_we;
+  wire [8:0]  cap_waddr;
+  wire [15:0] cap_wdata;
+
+  splice_capture capture (
+      .clk      (clk),
+      .rst      (!rst_n || start),
+      .lines    (sync2),
+      .trig_rise(trig_sync[1] && !trig_prev && running),
+      .watch    (cap_watch),
+      .prescale (cap_prescale),
+      .mode     (cap_mode),
+      .post     (cap_post),
+      .on       (engine_cap_on || host_cap_on),
+      .off      (engine_cap_off || host_cap_off || stop),
+      .mark     (engine_cap_mark),
+      .we       (cap_we),
+      .waddr    (cap_waddr),
+      .wdata    (cap_wdata),
+      .active   (cap_active),
+      .wrapped  (cap_wrapped),
+      .triggered(cap_triggered),
+      .ptr      (cap_ptr)
   );
 
   // ------------------------------------------------------------------ Line fabric
@@ -164,6 +231,26 @@ module tt_um_prajesh47_splice (
   wire [7:0] partner = {sync2[3:0], sync2[7:4]};
   wire [7:0] partner_fast = {sync1[3:0], sync1[7:4]};
   wire [7:0] level = (fast & partner_fast) | (~fast & partner);
+
+  // One open-drain bridge per pair, active when either side's source selects it.
+  wire [3:0] bridge_low_a, bridge_low_b;
+  genvar p;
+  generate
+    for (p = 0; p < 4; p = p + 1) begin : pair
+      splice_bridge bridge (
+          .clk     (clk),
+          .rst     (engine_rst),
+          .enable  (src_nx[3 * p +: 3] == 3'd6 || src_nx[3 * (p + 4) +: 3] == 3'd6),
+          .line_a  (sync2[p]),
+          .line_b  (sync2[p + 4]),
+          .holdoff (holdoff),
+          .low_a_nx(bridge_low_a[p]),
+          .low_b_nx(bridge_low_b[p])
+      );
+    end
+  endgenerate
+  wire [7:0] bridge_low = {bridge_low_b, bridge_low_a};
+
   integer x;
   always @(posedge clk) begin
     if (engine_rst) begin
@@ -177,7 +264,8 @@ module tt_um_prajesh47_splice (
           3'd3: {line_oe[x], line_out[x]} <= {!(!level[x] && odrain[x]), !level[x] && !odrain[x]};
           3'd4: {line_oe[x], line_out[x]} <= 2'b10;
           3'd5: {line_oe[x], line_out[x]} <= {!odrain[x], !odrain[x]};
-          default: {line_oe[x], line_out[x]} <= 2'b00;  // HIZ, and the bridge until it's built
+          3'd6: {line_oe[x], line_out[x]} <= {bridge_low[x], 1'b0};
+          default: {line_oe[x], line_out[x]} <= 2'b00;  // HIZ
         endcase
       end
     end
@@ -189,7 +277,7 @@ module tt_um_prajesh47_splice (
   // ------------------------------------------------------------------ Memories
   // Each macro has its own registers, so no long bus runs between them.
   wire host_prog = !running && mem_req && !mem_cap;
-  wire host_cap  = !running && mem_req && mem_cap;
+  wire host_cap  = !cap_active && !cap_we && mem_req && mem_cap;
 
   wire [15:0] cap_dout;
 
@@ -213,14 +301,14 @@ module tt_um_prajesh47_splice (
       .A_BIST_BM  (16'd0)
   );
 
-  // Host access only, until the capture unit is built.
+  // The capture unit has priority. The host can read results once capture has stopped.
   RM_IHPSG13_1P_512x16_c2_bm_bist cap_sram (
       .A_CLK      (clk),
-      .A_MEN      (host_cap),
-      .A_WEN      (host_cap && mem_we),
+      .A_MEN      (cap_we || host_cap),
+      .A_WEN      (cap_we || (host_cap && mem_we)),
       .A_REN      (host_cap && !mem_we),
-      .A_ADDR     (mem_addr),
-      .A_DIN      (mem_wdata),
+      .A_ADDR     (cap_we ? cap_waddr : mem_addr),
+      .A_DIN      (cap_we ? cap_wdata : mem_wdata),
       .A_DLY      (1'b1),
       .A_DOUT     (cap_dout),
       .A_BM       (16'hFFFF),
@@ -242,6 +330,6 @@ module tt_um_prajesh47_splice (
 
   assign uo_out = {aux_q, running, trig, irq, spi_miso};
 
-  wire _unused = &{ena, ui_in[3], holdoff, 1'b0};
+  wire _unused = &{ena, ui_in[3], 1'b0};
 
 endmodule

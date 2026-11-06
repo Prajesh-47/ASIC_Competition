@@ -212,9 +212,14 @@ Field names: `line` 0–7 is a bus line and 8–11 is AUX; `side` is enable and 
 | **Hardware match rules** | **Week-7 stretch** | Engine-free rules on live traffic. Unique among the entrants I surveyed, but only tested on UART so far, so they must also work on SPI and I2C | About 30K µm² |
 
 ## 6. Capture unit
-- Watches up to 4 lines (WATCH bits); on any change writes a 16-bit word: `[15:12] line states | [11:0] Δt` (ticks of a programmable prescaler). Δt overflow → repeat-state entry with Δt = 0xFFF.
-- Ring buffer in the capture region of SRAM; start/stop via `CAPON/CAPOFF`, `TRIG_IN`, or line pattern match; pre-trigger depth configurable.
-- Host reads capture over SPI; host tool converts to **sigrok/PulseView** format so users get protocol decoders for free.
+- Watches 4 lines, chosen by host registers. On any change it writes one 16-bit word: `[15:12]` line states, `[11:0]` Δt, in ticks of a programmable prescaler. The first entry of a run records the starting state with Δt = 0.
+- **Reserved Δt values:** `0xFFF` means nothing changed for `0xFFD` ticks, and counting continues. `0xFFE` is a mark from the engine (`CAPMARK`), which takes no time.
+- **Start and stop:** `CAPON`/`CAPOFF`, host register 10, or `TRIG_IN`'s rising edge.
+- **Without ring mode,** capture stops when the 512 words are full.
+- **Ring mode** wraps and keeps the newest entries. A trigger (`TRIG_IN`, or `CAPMARK` if enabled) then stops capture a set number of entries later, which gives pre-trigger history.
+- `STOP` ends capture but keeps results readable. The next `START` clears them. The host can only read capture memory while capture isn't active.
+- `host/splice_host/capture.py` turns entries into timed edges and writes VCD, which PulseView opens, so users get its protocol decoders for free.
+- **Not built:** line-pattern match start.
 
 ## 7. Memory
 - **Decision (approved and hardened 2026-11-05):** two separate single-port SRAM macros: `RM_IHPSG13_1P_256x16` for program and `RM_IHPSG13_1P_512x16` for capture. See section 7.3.
@@ -290,7 +295,7 @@ SCK is at most core/8, oversampled with 2-flop synchronizers, so the whole chip 
 | `0x12` | Status | one byte | `{0, 0, irq, e2h_empty, h2e_full, halted[1:0], running}` |
 | `0x20` / `0x21` | Write / read FIFO | words | Writing a full FIFO drops the word. Reading an empty FIFO returns 0 |
 
-Registers: 0 mode (bit 0: two contexts), 1 open-drain lines, 2 fast pass-through lines, 3 bridge holdoff, 4 and 5 context 1's start address. **`STEP` isn't built yet.**
+Registers: 0 mode (bit 0: two contexts), 1 open-drain lines, 2 fast pass-through lines, 3 bridge holdoff, 4 and 5 context 1's start address, 6 and 7 capture's 4 watched lines, 8 and 9 capture prescaler, 10 capture control (write bits 2:0 mode, bit 7 start, bit 6 stop; read `{active, wrapped, triggered, 0, 0, mode}`), 11 and 12 entries kept after a trigger, 13 and 14 capture write pointer (read only). **`STEP` isn't built yet.**
 
 Host software (Python): assembler, loader, CLI (`splice load/run/capture/decode`), sigrok export. Runs against RTL sim (cocotb) **and** the real board (RP2040 on TT demo board as SPI host).
 

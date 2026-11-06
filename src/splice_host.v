@@ -34,7 +34,7 @@ module splice_host (
     input  wire [15:0] mem_rdata,
 
     output reg         reg_we,
-    output reg  [2:0]  reg_addr,
+    output reg  [3:0]  reg_addr,
     output reg  [7:0]  reg_wdata,
     input  wire [7:0]  reg_rdata,
 
@@ -174,14 +174,14 @@ module splice_host (
             mem_we <= 1'b1;
           end
         end else if (cmd == WR_REG) begin
-          if (phase == 1) reg_addr <= byte_in[2:0];
+          if (phase == 1) reg_addr <= byte_in[3:0];
           else begin
             reg_wdata <= byte_in;
             reg_we <= 1'b1;
           end
         end else if (cmd == RD_REG) begin
           if (phase == 1) begin
-            reg_addr <= byte_in[2:0];
+            reg_addr <= byte_in[3:0];
             reg_load <= 1'b1;
           end
         end else if (cmd == FIFO_WR) begin
