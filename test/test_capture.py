@@ -68,14 +68,14 @@ async def test_capture_long_silence_uses_repeat_entries(dut):
     await load_program(dut, firmware("capture_on.s").words)
     await start(dut)
     await ClockCycles(dut.clk, 10)
-    gap = 2 * 0xFFD + 300
-    await capture(dut, gap + 50, lambda t, o, e: 0xFE | (0 if t >= gap else 1))
+    first, gap = 20, 2 * 0xFFD + 300
+    await capture(dut, first + gap + 50, lambda t, o, e: 0xFE | (1 if first <= t < first + gap else 0))
     await stop(dut)
     words = await read_capture(dut, await capture_pointer(dut))
     assert [w & 0xFFF for w in words].count(0xFFF) == 2, f"{[hex(w) for w in words]}"
     edges, _ = capture_lib.decode(words)
-    assert edges[-1][1] & 1 == 0
-    assert abs(edges[-1][0] - gap) < 40, f"{edges}"
+    assert edges[-1][1] & 1 == 0 and edges[-2][1] & 1 == 1
+    assert edges[-1][0] - edges[-2][0] == gap, f"gap measured across repeats is wrong: {edges}"
 
 
 @cocotb.test()

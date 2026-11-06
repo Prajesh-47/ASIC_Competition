@@ -32,6 +32,7 @@ specific rise and holdoff values. Nothing has been on silicon, and pad numbers d
 | `test/` | cocotb tests (RTL and gate level) |
 | `docs/info.md` | Tiny Tapeout datasheet page |
 | `docs/architecture.md` | SPLICE architecture spec |
+| `docs/verification.md` | How the design is checked, what that found, and known gaps |
 | `docs/overview.md` | Plain-language summary of the project and its status |
 | `docs/isa/` | ISA studies, results sheets, and everything tried |
 | `docs/ai-log.md` | What was AI-written and how it was independently checked |

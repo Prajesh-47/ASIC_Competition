@@ -305,7 +305,7 @@ Host software (Python): assembler, loader, CLI (`python3 -m splice_host`: setup,
 1. **Golden model:** cycle-exact Python ISA + line-fabric simulator.
 2. **Differential testing:** random constrained programs run on RTL (cocotb/Icarus or Verilator) and model; compare pin traces cycle-by-cycle.
 3. **Protocol tests:** firmware UART/SPI/I2C vs independent cocotb bus models (cocotbext-uart / -spi; I2C model written ourselves if needed).
-4. **Formal (SymbiYosys):** ODB no-deadlock & bounded release; every instruction's cycle count exact; FIFO/SPI safety; PASS mode == identity (with fixed latency).
+4. **Formal (Yosys temporal induction, no `sby`):** ODB no-deadlock and bounded release, and FIFO safety, are proved. Instruction cycle counts and PASS identity have simulation evidence only so far. Results and gaps are in [`verification.md`](verification.md).
 5. **Identity fuzz:** random traffic through PASS must emerge bit-identical, shifted by exactly the specified latency.
 6. **Gate-level sim** from CI netlist; STA at ss corner.
 7. **Coverage report** (ISA opcodes × conditions, fabric modes × transitions) published in the README.
