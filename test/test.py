@@ -16,7 +16,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "model"))
 
 from splice.asm import assemble  # noqa: E402
-from splice.isa import COND, TABLE, encode  # noqa: E402
+from splice.isa import COND, PHASE, SRC, TABLE, WAITC, WANT, encode  # noqa: E402
 from splice.model import Splice  # noqa: E402
 
 sys.path.insert(0, os.path.join(HERE, "..", "host"))
@@ -338,6 +338,46 @@ async def test_uart_tx_loaded_over_spi(dut):
 
 
 @cocotb.test()
+async def test_pass_through_is_identity_with_exact_latency(dut):
+    """Random traffic, pulses of one cycle included, through all four pairs in both directions.
+    Latency comes from the spec (section 4.2), not from the model: 3 cycles, or 2 on a fast line."""
+    await reset(dut)
+    prog = assemble("""
+        mode 4, pass
+        mode 5, inv
+        mode 2, pass
+        mode 3, inv
+top:    jmp  top
+""")
+    partner = {4: (0, 0), 5: (1, 1), 2: (6, 0), 3: (7, 1)}  # output line: its input line, inverted or not
+    rng = random.Random(7)
+    for fast in (0x00, 0xFF, 0x14):
+        await stop(dut)
+        await load_program(dut, prog.words)
+        await write_reg(dut, 2, fast)
+        await start(dut)
+        await ClockCycles(dut.clk, 12)
+        wave, value = [], 0xFF
+        for _ in range(3000):
+            value ^= rng.getrandbits(8) & rng.getrandbits(8)  # about a quarter of the lines toggle each cycle
+            wave.append(value)
+        wave += [wave[-1]] * 6
+        trace = await capture(dut, len(wave), lambda t, out, oe: wave[t])
+        toggles = {line: 0 for line in partner}
+        for line, (source, inverted) in partner.items():
+            latency = 2 if (fast >> line) & 1 else 3
+            for t in range(10, len(wave)):
+                out, oe, _ = trace[t]
+                assert (oe >> line) & 1, f"line {line} released at {t}"
+                expected = ((wave[t - latency] >> source) & 1) ^ inverted
+                assert (out >> line) & 1 == expected, f"line {line}, fast {fast:#x}, cycle {t}"
+                toggles[line] += ((wave[t - latency] ^ wave[t - latency - 1]) >> source) & 1
+        assert all(count > 300 for count in toggles.values()), f"too little traffic: {toggles}"
+    await stop(dut)
+    await write_reg(dut, 2, 0)
+
+
+@cocotb.test()
 async def test_contexts_keep_their_own_return_address(dut):
     """Both contexts inside a CALL at the same time. Each must return to its own call site."""
     await reset(dut)
@@ -546,6 +586,11 @@ def random_program(rng, length, ctx1):
             words.append(rng.choice([0xC400, 0xC800, 0xCC00, 0xA800, 0xB000, 0xE640, 0xF000, 0xFFFF]))
             continue
         op = rng.choice(choices)
+        chance = rng.random()
+        if chance < 0.03:  # uniform choice left two coverage bins empty: TSRC on falling edges, JMP on BC != 0
+            op = "TSRC"
+        elif chance < 0.08:
+            op = "BCI"
         if op == "HALT" and rng.random() < 0.9:
             op = "NOP"
         if op == "PULLW" and rng.random() < 0.7:
@@ -557,6 +602,8 @@ def random_program(rng, length, ctx1):
             value = rng.getrandbits(width)
             if name == "to":
                 value = rng.randrange(1, length - 1)
+            elif name == "c" and op == "JMP" and rng.random() < 0.3:
+                value = COND["BCN"]
             elif name == "rel":
                 value = rng.randrange(0, min(pc, 16))
             elif name == "n" and op == "DLY":
@@ -731,5 +778,16 @@ async def test_rtl_matches_model_two_contexts(dut):
 async def test_differential_covered_every_instruction(dut):
     """Passing means nothing for instructions that never ran, so check that they did."""
     unused = sorted(op for op in TABLE if op not in COVERAGE and op != "HALT")
-    dut._log.info(f"executed instructions: {dict(sorted(COVERAGE.items()))}")
-    assert not GATE_LEVEL and not unused or GATE_LEVEL, f"never executed: {unused}"
+    bins = [f"JMP.{c}.{r}" for c in COND.values() for r in ("taken", "not") if (c, r) != (0, "not")]
+    bins += [f"WAIT.{c}.{r}" for c in WAITC.values() for r in ("met", "timeout")]
+    bins += [f"MODE.{s}" for s in SRC.values()] + [f"TPHASE.{m}" for m in PHASE.values()]
+    bins += [f"TSRC.{w}" for w in WANT.values()] + ["PUSH.ok", "PUSH.full"]
+    bins += [f"{op}.t" for op, (_, fields) in TABLE.items() if any(name == "tick" for name, _ in fields)]
+    missing = sorted(b for b in bins if b not in COVERAGE)
+    dut._log.info(f"coverage: {len(bins) - len(missing)}/{len(bins)} bins, {sum(COVERAGE.values())} events")
+    if GATE_LEVEL:  # far fewer runs at gate level, so this is only reported
+        return
+    with open(os.path.join(HERE, "coverage.txt"), "w", encoding="utf-8") as report:
+        report.writelines(f"{name} {COVERAGE.get(name, 0)}\n" for name in sorted(set(COVERAGE) | set(bins)))
+    assert not unused, f"never executed: {unused}"
+    assert not missing, f"bins never hit: {missing}"

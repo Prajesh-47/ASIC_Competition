@@ -41,6 +41,9 @@ class Splice:
         self.coverage = {}
         self.reset()
 
+    def cover(self, name):
+        self.coverage[name] = self.coverage.get(name, 0) + 1
+
     def reset(self):
         self.two = False
         self.ctx1_pc = 0
@@ -291,12 +294,14 @@ class Splice:
             met = {0: bit == 0, 1: bit == 1, 2: was == 0 and bit == 1, 3: was == 1 and bit == 0}[f["c"]]
             if met:
                 c.to_left = None
+                self.cover(f"WAIT.{f['c']}.met")
             elif c.TO:
                 left = (c.to_left if c.to_left is not None else c.TO) - 1
                 if left > 0:
                     c.to_left = left
                     return
                 c.F, c.to_left = 1, None
+                self.cover(f"WAIT.{f['c']}.timeout")
             else:
                 return
         elif op == "WAITT":
@@ -381,6 +386,7 @@ class Splice:
             c.Z = self.line(f["line"])
         elif op == "JMP":
             taken = {0: True, 1: c.Z == 1, 2: c.Z == 0, 3: c.F == 1, 4: c.F == 0, 5: c.BC == 0, 6: c.BC != 0, 7: False}[f["c"]]
+            self.cover(f"JMP.{f['c']}.{'taken' if taken else 'not'}")
             if taken:
                 next_pc = f["to"]
         elif op == "DJNZ":
@@ -403,6 +409,16 @@ class Splice:
             self.cap_cmd[1] = True
         elif op == "CAPMARK":
             self.cap_cmd[2] = True
-        self.coverage[op] = self.coverage.get(op, 0) + 1
+        self.cover(op)
+        if op == "MODE":
+            self.cover(f"MODE.{f['src']}")
+        elif op == "PUSH":
+            self.cover(f"PUSH.{'full' if c.F and len(self.e2h) >= self.FIFO_DEPTH else 'ok'}")
+        elif op == "TPHASE":
+            self.cover(f"TPHASE.{f['mode']}")
+        elif op == "TSRC":
+            self.cover(f"TSRC.{f['want']}")
+        if f.get("tick"):
+            self.cover(f"{op}.t")
         c.pc = next_pc
         c.stall = dly

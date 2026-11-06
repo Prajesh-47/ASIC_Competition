@@ -14,7 +14,7 @@ check() {  # required name top files chparams steps
   cat > "$OUT/$name.ys" <<Y
 read_verilog -sv -formal -DFORMAL $files
 hierarchy -check -top $top $params
-proc; flatten; opt -keepdc; opt_clean
+proc; flatten; memory; async2sync; opt -keepdc; opt_clean
 sat -tempinduct -prove-asserts -seq 2 -set-at 1 rst 1 -set-at 2 rst 0 -maxsteps $steps
 Y
   yosys -q -l "$OUT/$name.log" "$OUT/$name.ys" >/dev/null 2>&1
@@ -36,6 +36,7 @@ B="bridge_closed_loop.v $SRC/splice_bridge.v"
 check proved         bridge_rise5_hold12    bridge_closed_loop "$B" "-chparam HOLDOFF 12 -chparam RISE 5 -chparam BOUND 32" 45
 check proved         bridge_rise10_hold20   bridge_closed_loop "$B" "-chparam HOLDOFF 20 -chparam RISE 10 -chparam BOUND 50" 65
 check proved         bridge_rise15_hold30   bridge_closed_loop "$B" "-chparam HOLDOFF 30 -chparam RISE 15 -chparam BOUND 75" 90
+check proved         fifo_safety            fifo_props "fifo_props.v $SRC/splice_fifo.v" "" 30
 # Controls: these must produce a real counterexample, or the proofs above show nothing.
 check counterexample holdoff_too_short      bridge_closed_loop "$B" "-chparam HOLDOFF 2 -chparam RISE 10 -chparam BOUND 50" 65
 check counterexample release_bound_too_tight bridge_closed_loop "$B" "-chparam HOLDOFF 20 -chparam RISE 10 -chparam BOUND 5" 30

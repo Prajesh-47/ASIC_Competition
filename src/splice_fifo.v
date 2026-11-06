@@ -15,10 +15,23 @@ module splice_fifo #(parameter DEPTH_LOG2 = 2) (
     input  wire        pop,
     output wire [15:0] head,
     output wire        empty
+`ifdef FORMAL
+    ,
+    output wire [DEPTH_LOG2:0]   wp_out,
+    output wire [DEPTH_LOG2:0]   rp_out,
+    input  wire [DEPTH_LOG2-1:0] peek,
+    output wire [15:0]           peek_word
+`endif
 );
   localparam DEPTH = 1 << DEPTH_LOG2;
   reg [15:0] mem [0:DEPTH-1];
   reg [DEPTH_LOG2:0] wp, rp;
+
+`ifdef FORMAL
+  assign wp_out = wp;
+  assign rp_out = rp;
+  assign peek_word = mem[peek];
+`endif
 
   assign empty = wp == rp;
   assign full  = wp[DEPTH_LOG2] != rp[DEPTH_LOG2] && wp[DEPTH_LOG2-1:0] == rp[DEPTH_LOG2-1:0];
