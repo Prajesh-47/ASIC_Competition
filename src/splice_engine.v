@@ -195,15 +195,34 @@ module splice_engine (
   wire [1:0]  rn_alu  = ins[7:6];            // AND, XOR, DLYR
   wire [1:0]  rn_sft  = ins[5:4];            // RAND, SHL, SHR
 
-  function automatic [15:0] operand(input [2:0] code, input ctx);
+  // Register file read ports for the current context. These are plain wires on purpose: a function
+  // that reads state behind its arguments isn't re-evaluated in a continuous assign, so simulation
+  // would use stale values while synthesis wouldn't.
+  wire [15:0] r0_c = rr[{c, 2'd0}];
+  wire [15:0] r1_c = rr[{c, 2'd1}];
+  wire [15:0] r2_c = rr[{c, 2'd2}];
+  wire [15:0] r3_c = rr[{c, 2'd3}];
+  wire [15:0] sr_c = sr[c];
+  wire [4:0]  bc_c = bc[c];
+  wire [15:0] to_c = to[c];
+
+  function automatic [15:0] operand(input [2:0] code, input [15:0] r0, input [15:0] r1, input [15:0] r2,
+                                    input [15:0] r3, input [15:0] srv, input [4:0] bcv, input [15:0] tov);
     case (code)
-      3'd4:    operand = sr[ctx];
-      3'd5:    operand = {11'd0, bc[ctx]};
-      3'd6:    operand = to[ctx];
-      3'd7:    operand = {8'd0, sr[ctx][15:8]};
-      default: operand = rr[{ctx, code[1:0]}];
+      3'd0:    operand = r0;
+      3'd1:    operand = r1;
+      3'd2:    operand = r2;
+      3'd3:    operand = r3;
+      3'd4:    operand = srv;
+      3'd5:    operand = {11'd0, bcv};
+      3'd6:    operand = tov;
+      default: operand = {8'd0, srv[15:8]};
     endcase
   endfunction
+
+  wire [15:0] opnd_alu = operand(ins[5:3], r0_c, r1_c, r2_c, r3_c, sr_c, bc_c, to_c);  // AND, XOR
+  wire [15:0] opnd_mov = operand(ins[4:2], r0_c, r1_c, r2_c, r3_c, sr_c, bc_c, to_c);  // MOV, CMP b
+  wire [15:0] opnd_cmp = operand(ins[7:5], r0_c, r1_c, r2_c, r3_c, sr_c, bc_c, to_c);  // CMP a
 
   wire        sbit = msb[c] ? sr[c][15] : sr[c][0];
   wire [15:0] sr_shifted_out = msb[c] ? {sr[c][14:0], 1'b0} : {1'b0, sr[c][15:1]};
@@ -293,10 +312,10 @@ module splice_engine (
 
   // ------------------------------------------------------------------ Clocked state
   wire [15:0] alu_add = rr[{c, rn_add}] + {8'd0, ins[7:0]};
-  wire [15:0] alu_xor = rr[{c, rn_alu}] ^ operand(ins[5:3], c);
-  wire [15:0] alu_and = rr[{c, rn_alu}] & operand(ins[5:3], c);
+  wire [15:0] alu_xor = rr[{c, rn_alu}] ^ opnd_alu;
+  wire [15:0] alu_and = rr[{c, rn_alu}] & opnd_alu;
   wire [15:0] lfsr_nx = {1'b0, lfsr[c][15:1]} ^ (lfsr[c][0] ? 16'hB400 : 16'h0000);
-  wire [15:0] mov_val = operand(ins[4:2], c);
+  wire [15:0] mov_val = opnd_mov;
   wire [13:0] phase_half = {2'd0, tp[c][12:1]};
 
   integer i;
@@ -448,7 +467,7 @@ module splice_engine (
                   rr[{c, rn_alu}] <= alu_and;
                   z[c] <= alu_and == 0;
                 end
-                O_CMP: z[c] <= operand(ins[7:5], c) == operand(ins[4:2], c);
+                O_CMP: z[c] <= opnd_cmp == opnd_mov;
                 O_CMPI: z[c] <= rr[{c, rn_add}] == {8'd0, ins[7:0]};
                 O_SHR: begin
                   f[c] <= rr[{c, rn_sft}][0];

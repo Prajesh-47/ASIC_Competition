@@ -288,7 +288,7 @@ SCK is at most core/8, oversampled with 2-flop synchronizers, so the whole chip 
 | `0x05` / `0x06` | Write / read register | `reg` then value | See below |
 | `0x10` / `0x11` | `START` / `STOP` | | `START` keeps FIFO words pushed beforehand. `STOP` releases every line |
 | `0x12` | Status | one byte | `{0, 0, irq, e2h_empty, h2e_full, halted[1:0], running}` |
-| `0x20` / `0x21` | Write / read FIFO | words | Writing a full FIFO drops the word |
+| `0x20` / `0x21` | Write / read FIFO | words | Writing a full FIFO drops the word. Reading an empty FIFO returns 0 |
 
 Registers: 0 mode (bit 0: two contexts), 1 open-drain lines, 2 fast pass-through lines, 3 bridge holdoff, 4 and 5 context 1's start address. **`STEP` isn't built yet.**
 

@@ -21,7 +21,8 @@ module splice_fifo #(parameter DEPTH_LOG2 = 2) (
 
   assign empty = wp == rp;
   assign full  = wp[DEPTH_LOG2] != rp[DEPTH_LOG2] && wp[DEPTH_LOG2-1:0] == rp[DEPTH_LOG2-1:0];
-  assign head  = mem[rp[DEPTH_LOG2-1:0]];
+  // An empty FIFO reads as 0, not as whatever an unwritten or old slot holds.
+  assign head  = empty ? 16'd0 : mem[rp[DEPTH_LOG2-1:0]];
 
   always @(posedge clk) begin
     if (clear) begin

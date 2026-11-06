@@ -40,7 +40,9 @@ async def spi_xfer(dut, data, ui_high=0xF0):
             bit = (byte >> k) & 1
             dut.ui_in.value = ui_high | (bit << 1)
             await ClockCycles(dut.clk, HALF)
-            value = (value << 1) | (int(dut.uo_out.value) & 1)
+            miso = str(dut.uo_out.value)[-1]  # uo[0] only: the other pins aren't part of this
+            assert miso in "01", f"MISO is {miso} during a host read, uo_out={dut.uo_out.value}"
+            value = (value << 1) | int(miso)
             dut.ui_in.value = ui_high | (bit << 1) | 1
             await ClockCycles(dut.clk, HALF)
         dut.ui_in.value = ui_high | (byte & 1) << 1
@@ -139,7 +141,8 @@ async def test_reset_state(dut):
     assert dut.uio_oe.value == 0, "lines must be hi-Z out of reset"
     assert dut.uio_out.value == 0
     assert int(dut.uo_out.value) == 0
-    assert (await status(dut)) & 1 == 0
+    # Not running, nothing halted, no IRQ, and both FIFOs in their empty state
+    assert await status(dut) == 0b00010000
 
 
 @cocotb.test()
@@ -150,6 +153,86 @@ async def test_lines_stay_hiz_until_configured(dut):
         dut.uio_in.value = value
         await ClockCycles(dut.clk, 4)
         assert dut.uio_oe.value == 0
+
+
+@cocotb.test()
+async def test_lines_hiz_during_reset_and_after_stop(dut):
+    """Hi-Z is a permanent requirement, so check it during reset too, not only afterwards."""
+    await reset(dut)
+    await load_program(dut, assemble("mode 0, f1\nmode 4, eng\nset 4, 1\nhalt").words)
+    await start(dut)
+    await ClockCycles(dut.clk, 10)
+    assert int(dut.uio_oe.value) == 0x11, "the program should be driving lines 0 and 4"
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 2)  # one edge to register reset, one to settle
+    for _ in range(8):
+        await FallingEdge(dut.clk)
+        assert int(dut.uio_oe.value) == 0, f"line driven during reset: {dut.uio_oe.value}"
+    dut.rst_n.value = 1
+    await ClockCycles(dut.clk, 3)
+    assert int(dut.uio_oe.value) == 0
+    await load_program(dut, assemble("mode 0, f1\nhalt").words)
+    await start(dut)
+    await ClockCycles(dut.clk, 10)
+    assert int(dut.uio_oe.value) == 0x01
+    await stop(dut)
+    assert int(dut.uio_oe.value) == 0, "STOP must release every line"
+
+
+# ------------------------------------------------------------------ Instruction results the pins can't show
+@cocotb.test()
+async def test_rand_sequence_and_seed(dut):
+    """Fuzzing depends on a repeatable sequence, so check it against an independent LFSR."""
+    await reset(dut)
+    prog = assemble("""
+        rand r0
+        mov  sr, r0
+        push
+        rand r0
+        mov  sr, r0
+        push
+        ldi  r1, 0x1234
+        mov  seed, r1
+        rand r0
+        mov  sr, r0
+        push
+        halt
+""")
+    await load_program(dut, prog.words)
+    await start(dut)
+    await ClockCycles(dut.clk, 30)
+
+    def step(state):
+        return (state >> 1) ^ (0xB400 if state & 1 else 0)
+    first = step(0xACE1)
+    assert await fifo_read(dut, 3) == [first, step(first), step(0x1234)]
+
+
+@cocotb.test()
+async def test_push_to_full_fifo_sets_f(dut):
+    """Data lost to a full FIFO has to be visible to firmware."""
+    await reset(dut)
+    prog = assemble("""
+        sri  0x11
+        push
+        push
+        push
+        push
+        jmp  f, early     ; four words fit
+        push
+        jmp  f, good      ; the fifth doesn't
+        halt
+good:   set  8, 1
+        halt
+early:  set  9, 1
+        halt
+""")
+    await load_program(dut, prog.words)
+    await start(dut)
+    await ClockCycles(dut.clk, 30)
+    aux = int(dut.uo_out.value) >> 4
+    assert aux == 0b0001, f"AUX_OUT={aux:04b}"
+    assert await fifo_read(dut, 4) == [0x11] * 4
 
 
 # ------------------------------------------------------------------ Memories through the host port
@@ -173,6 +256,12 @@ async def test_capture_memory_roundtrip(dut):
     assert [data[3] << 8 | data[4], data[5] << 8 | data[6]] == words[:2]
     data = await spi_xfer(dut, [0x04, 0, 0x00] + [0] * 2)
     assert data[3] << 8 | data[4] == words[2]
+
+
+@cocotb.test()
+async def test_empty_fifo_reads_as_zero(dut):
+    await reset(dut)
+    assert await fifo_read(dut, 2) == [0, 0]
 
 
 @cocotb.test()
@@ -359,6 +448,7 @@ top:    wait  1, fall
 PARK_LINE = 11  # AUX_IN3: every random program waits for this line before doing anything else
 MASK_UO = 0xFE  # uo[0] is the host's MISO, which the model doesn't include
 COVERAGE = {}
+STATE_CHECK_EVERY = 16  # reading every register through the simulator is slow, and errors persist
 
 
 def random_program(rng, length, ctx1):
@@ -399,6 +489,29 @@ def random_program(rng, length, ctx1):
         words.append(encode(op, **fields))
     words.append(encode("JMP", c=COND["AL"], to=1))
     return words
+
+
+def state_differences(dut, model):
+    """Every architectural register of both contexts, model against RTL."""
+    engine = dut.user_project.engine
+    diffs = {}
+    for k, c in enumerate(model.ctx):
+        pairs = {
+            "pc": (c.pc, engine.pc[k]), "SR": (c.SR, engine.sr[k]), "BC": (c.BC, engine.bc[k]),
+            "TO": (c.TO, engine.to[k]), "Z": (c.Z, engine.z[k]), "F": (c.F, engine.f[k]),
+            "stall": (c.stall, engine.stall[k]), "pending": (int(c.pending), engine.pending[k]),
+            "tcnt": (c.tcnt, engine.tcnt[k]), "tp": (c.tp, engine.tp[k]), "lr": (c.lr, engine.lr[k]),
+            "msb": (int(c.msb), engine.msb[k]), "lfsr": (c.lfsr, engine.lfsr[k]),
+            "side": (c.side_line, engine.side_ln[k]), "tsl": (c.tsrc_line, engine.ts_line[k]),
+            "tsw": (c.tsrc_want, engine.ts_want[k]),
+        }
+        for r in range(4):
+            pairs[f"R{r}"] = (c.R[r], engine.rr[k * 4 + r])
+        for name, (want, handle) in pairs.items():
+            value = int(handle.value)
+            if value != want:
+                diffs[f"ctx{k}.{name}"] = (want, value)
+    return diffs
 
 
 async def differential_once(dut, seed, cycles, two):
@@ -451,6 +564,15 @@ async def differential_once(dut, seed, cycles, two):
                        f"model {[(e['out'], e['oe'], e['uo'] & MASK_UO) for e in expected]}, "
                        f"pc {[[c.pc for c in m.ctx] for m in models]}")
         models = alive
+
+        # On RTL, also compare the engine's internal state. Pins alone can hide a wrong register
+        # value for thousands of cycles. The gate-level netlist doesn't have these names.
+        if not GATE_LEVEL and t % STATE_CHECK_EVERY == 0:
+            matching = [m for m in models if not state_differences(dut, m)]
+            assert matching, (f"seed {seed} two={two} cycle {t}: internal state differs, model vs RTL: "
+                              f"{[state_differences(dut, m) for m in models]}")
+            models = matching
+            expected = [m.pins() for m in models]
 
         # Lines change often enough to satisfy edge waits. AUX_IN3 drops at the start and stays
         # low for a while, which releases the park on both sides on the same clock.

@@ -1,11 +1,12 @@
 #!/bin/bash
 # Mutation check: deliberately break the RTL, and confirm the tests notice. Run from test/.
-# A mutant that survives points at a gap in the tests.
+# A mutant that survives points at a gap in the tests. ONLY=regex runs a subset.
 SRC=$(cd ../src && pwd)
 OUT=${1:-mutation_results.txt}
 : > "$OUT"
 run() {
   name=$1; file=$2; from=$3; to=$4
+  if [ -n "$ONLY" ] && ! [[ "$name" =~ $ONLY ]]; then return; fi
   dir=$(mktemp -d)
   cp "$SRC"/*.v "$dir"/
   if ! python3 - "$dir/$file" "$from" "$to" <<'PY'
@@ -55,5 +56,10 @@ run "reset leaves a line driven" $T "      line_oe <= 8'd0;
     end else begin"
 run "host write skips a word" $H "if (mem_req && mem_we) mem_addr <= mem_addr + 9'd1;" "if (mem_req && mem_we) mem_addr <= mem_addr + 9'd2;"
 run "FIFO read loses the low byte" $H "tx <= rd_word[7:0];" "tx <= 8'd0;"
+run "STOP doesn't release lines" $T "wire engine_rst = !rst_n || start || stop;" "wire engine_rst = !rst_n || start;"
+run "empty FIFO returns stale data" splice_fifo.v "empty ? 16'd0 : mem[rp[DEPTH_LOG2-1:0]]" "mem[rp[DEPTH_LOG2-1:0]]"
+run "CMP ignores its second operand" $E "O_CMP: z[c] <= opnd_cmp == opnd_mov;" "O_CMP: z[c] <= opnd_cmp == 16'd0;"
+run "AND acts as XOR" $E "rr[{c, rn_alu}] <= alu_and;" "rr[{c, rn_alu}] <= alu_xor;"
+run "RAND seed ignored" $E "3'd7: lfsr[c] <= mov_val;" "3'd7: ;"
 rm -rf sim_build results.xml
 echo done | tee -a "$OUT"
