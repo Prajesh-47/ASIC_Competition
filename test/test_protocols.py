@@ -744,3 +744,45 @@ async def test_usb_ls_receive(dut):
     for ppm in (0, 15000, -15000):
         for got, sent in await usb_receive(dut, packets, ppm=ppm):
             assert got == sent, f"at {ppm} ppm: sent {sent}, got {got}"
+
+
+@cocotb.test()
+async def test_two_protocols_at_once(dut):
+    """UART receive and SPI controller from one program, both running, each judged by its own device model."""
+    await reset(dut)
+    bit, half = 40, 10
+    prog = firmware("two_protocols.s", BIT=bit, HALF=half)
+    await load_program(dut, prog.words)
+    await write_reg(dut, 0, 1)
+    await write_reg(dut, 4, prog.ctx1 >> 8)
+    await write_reg(dut, 5, prog.ctx1 & 0xFF)
+    uart_sent, spi_sent = [0x55, 0xA3, 0x0F, 0xE1], [0x96, 0x3C, 0xFF, 0x01]
+    await fifo_write(dut, [b << 8 for b in spi_sent])
+    await start(dut)
+
+    wave = [1] * (2 * bit)
+    for byte in uart_sent:
+        wave += sum(([b] * bit for b in [0] + [(byte >> k) & 1 for k in range(8)] + [1]), []) + [1] * 7
+    st = {"psck": 0, "mosi": [], "rises": []}
+
+    def bus(t, out, oe):
+        sck = level(out, oe, 4, idle=0)
+        if sck and not st["psck"]:
+            st["mosi"].append(level(out, oe, 5))
+            st["rises"].append(t)
+        st["psck"] = sck
+        rx = wave[t] if t < len(wave) else 1
+        return 0xFE | rx
+
+    await capture(dut, len(wave) + 2 * bit, bus)
+    bytes_out = [sum(b << (7 - i) for i, b in enumerate(st["mosi"][j:j + 8])) for j in range(0, len(st["mosi"]), 8)]
+    assert bytes_out == spi_sent, f"SPI sent {[hex(b) for b in bytes_out]}"
+    words = await fifo_read(dut, len(uart_sent))
+    assert [w >> 8 for w in words] == uart_sent, f"UART got {[hex(w) for w in words]}"
+
+    # Half rate may delay a tick by one slot, and no more
+    gaps = [b - a for a, b in zip(st["rises"], st["rises"][1:])]
+    within_byte = [g for i, g in enumerate(gaps) if (i + 1) % 8]
+    assert all(abs(g - 2 * half) <= 1 for g in within_byte), f"SCK period off: {sorted(set(within_byte))}"
+    await stop(dut)
+    await write_reg(dut, 0, 0)

@@ -338,6 +338,42 @@ async def test_uart_tx_loaded_over_spi(dut):
 
 
 @cocotb.test()
+async def test_contexts_keep_their_own_return_address(dut):
+    """Both contexts inside a CALL at the same time. Each must return to its own call site."""
+    await reset(dut)
+    prog = assemble("""
+        set   4, 0
+        mode  4, eng
+        call  slow
+        set   4, 1
+        halt
+slow:   delay 100
+        ret
+other:  delay 10
+        set   5, 0
+        mode  5, eng
+        call  quick
+        set   5, 1
+        halt
+quick:  delay 10
+        ret
+.ctx1 other
+""")
+    await load_program(dut, prog.words)
+    await write_reg(dut, 0, 1)
+    await write_reg(dut, 4, prog.ctx1 >> 8)
+    await write_reg(dut, 5, prog.ctx1 & 0xFF)
+    await start(dut)
+    trace = await capture(dut, 80)
+    assert not (trace[-1][0] >> 4) & 1, "context 0 returned early, so it took context 1's return address"
+    assert (trace[-1][0] >> 5) & 1, "context 1 didn't reach its own call site"
+    trace = await capture(dut, 300)
+    assert (trace[-1][0] >> 4) & 1, "context 0 didn't reach its own call site"
+    await stop(dut)
+    await write_reg(dut, 0, 0)
+
+
+@cocotb.test()
 async def test_same_netlist_runs_other_protocols(dut):
     """No reset and no RTL change: load a different program each time, on the same running chip."""
     await reset(dut)

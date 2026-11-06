@@ -7,6 +7,7 @@
 
 module splice_fifo #(parameter DEPTH_LOG2 = 2) (
     input  wire        clk,
+    input  wire        rst_n,
     input  wire        clear,
     input  wire        push,
     input  wire [15:0] din,
@@ -24,16 +25,22 @@ module splice_fifo #(parameter DEPTH_LOG2 = 2) (
   // An empty FIFO reads as 0, not as whatever an unwritten or old slot holds.
   assign head  = empty ? 16'd0 : mem[rp[DEPTH_LOG2-1:0]];
 
-  always @(posedge clk) begin
-    if (clear) begin
+  // Asynchronous reset on the pointers only. Synthesis folds a synchronous clear into the increment,
+  // giving !(wp | !wp), which is 0 on silicon but stays X forever in gate-level simulation. Clear is
+  // still high when rst_n rises, so D is 0 across the release and recovery time can't matter.
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      wp <= 0;
+      rp <= 0;
+    end else if (clear) begin
       wp <= 0;
       rp <= 0;
     end else begin
-      if (push && !full) begin
-        mem[wp[DEPTH_LOG2-1:0]] <= din;
-        wp <= wp + 1'b1;
-      end
+      if (push && !full) wp <= wp + 1'b1;
       if (pop && !empty) rp <= rp + 1'b1;
     end
   end
+
+  always @(posedge clk)
+    if (!clear && push && !full) mem[wp[DEPTH_LOG2-1:0]] <= din;
 endmodule

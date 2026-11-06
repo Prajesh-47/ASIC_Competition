@@ -22,7 +22,9 @@ module tt_um_prajesh47_splice (
     output wire [7:0] uio_oe,   // IOs: Enable path (active high: 0=input, 1=output)
     input  wire       ena,      // always 1 when the design is powered, so you can ignore it
     input  wire       clk,      // clock
+    // verilator lint_off SYNCASYNCNET
     input  wire       rst_n     // reset_n - low to reset
+    // verilator lint_on SYNCASYNCNET
 );
 
   // ------------------------------------------------------------------ Inputs
@@ -151,11 +153,11 @@ module tt_um_prajesh47_splice (
   wire engine_rst = !rst_n || start || stop;
 
   splice_fifo h2e (
-      .clk(clk), .clear(!rst_n || stop), .push(host_push), .din(host_wdata), .full(h2e_full),
+      .clk(clk), .rst_n(rst_n), .clear(!rst_n || stop), .push(host_push), .din(host_wdata), .full(h2e_full),
       .pop(h2e_pop), .head(h2e_head), .empty(h2e_empty));
 
   splice_fifo e2h (
-      .clk(clk), .clear(engine_rst), .push(e2h_push), .din(e2h_data), .full(e2h_full),
+      .clk(clk), .rst_n(rst_n), .clear(engine_rst), .push(e2h_push), .din(e2h_data), .full(e2h_full),
       .pop(host_pop), .head(e2h_head), .empty(e2h_empty));
 
   // ------------------------------------------------------------------ Engine

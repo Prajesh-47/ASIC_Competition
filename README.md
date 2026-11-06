@@ -21,7 +21,7 @@ Plain-language overview: [`docs/overview.md`](docs/overview.md) · Architecture 
 **All main blocks exist in RTL:** engine, SPI loader, line fabric, open-drain bridge, capture unit. Programs
 loaded over SPI run UART, SPI, I2C, JTAG, SWD, PS/2, WS2812, 1-Wire, CAN and low-speed USB, in simulation on
 the same netlist. CAN and low-speed USB also receive, recovering the clock from edges in software, across each
-bus's allowed clock error. The host CLI exists but has not run on a board. The I2C bridge can force a NACK and is formally proven for
+bus's allowed clock error. Two protocols can run at once, one per context. The host CLI exists but has not run on a board. The I2C bridge can force a NACK and is formally proven for
 specific rise and holdoff values. Nothing has been on silicon, and pad numbers don't exist yet for CMOS5L.
 
 ## Repository layout
