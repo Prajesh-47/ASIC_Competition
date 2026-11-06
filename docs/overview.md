@@ -81,7 +81,7 @@ different from an ordinary small processor:
 |---|---|---|---|---|
 | **Pitch** | Lead with flexibility; interposing is the differentiator | The organisers say flexibility matters most. A scan of 22 entrants' READMEs found nobody describing inline alteration | Leading with exact timing, which others already claim | Finding a competitor doing the same |
 | **Memory** | Two SRAM macros: 256x16 program, 512x16 capture, 8% of the die | A fetch and a capture write can never collide, and the organisers confirmed macros are allowed | One shared macro; latch or flop memory (twice the area for a quarter of the storage) | Firmware outgrowing 256 words: move to 512 |
-| **Power for the macros** | Our own script, 117 lines, built after an earlier version that reused another entrant's code | You wanted original work. It passes the same checks | Keeping the 667-line copied script | Real design hitting power or routing problems |
+| **Power for the macros** | Our own script, 117 lines, built after an earlier version that reused another entrant's code | The project aims for original work over reuse, and it passes the same checks | Keeping the 667-line copied script | Real design hitting power or routing problems |
 | **ISA v1** | Fused instructions, ticks, side-set, `CALL`/`RET`, a bit test, `RAND` | Smallest firmware, and it ran every protocol tried | Spec draft (full-duplex SPI didn't work); PIO-style clock divider (no exact baud); timer alone (longer programs) | Problems found while building the engine |
 | **Tomasulo / out-of-order** | Rejected | A perfect version saves at most 2.8%, and those cycles would only be spent waiting | | |
 | **Two contexts** | One context at full rate, or two at half rate, chosen at start | Altering both directions at once needs two threads of control. It's far smaller than two engines | Two separate engines; polling (edges move) | Half rate turning out too slow in practice |
@@ -101,8 +101,8 @@ step. **Planned:** a separate Python model compared with the hardware cycle by c
 and the I2C bridge, random traffic tests, and tests on the final gate-level netlist.
 
 **Done so far:** protocol checkers that read only the pins, and negative controls that feed in deliberately
-broken firmware to confirm the checkers can fail. Those controls have caught real mistakes in my own test
-models. [`ai-log.md`](ai-log.md) records what AI tools wrote and how each piece was checked.
+broken firmware to confirm the checkers can fail. Those controls have caught real mistakes in the test
+models themselves. [`ai-log.md`](ai-log.md) records what AI tools wrote and how each piece was checked.
 
 ## What's been shown, and what hasn't
 

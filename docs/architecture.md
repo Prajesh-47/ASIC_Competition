@@ -142,7 +142,9 @@ The qualifier `.t` on an instruction means: wait for the next tick, then execute
 | Setup | `BCI`, `SRI`, `MSB`, `SIDE` | `SIDE` picks the line for side-set: a second line changing on the same edge |
 | Data | `LDI`, `MOV`, `ADD`, `XOR`, `AND`, `CMP`, `CMPI`, `SHR`, `SHL`, `RAND` | Shifts put the bit shifted out in `F`. `RAND` is one LFSR step, for seeded and repeatable fuzzing |
 | Control | `JMP`, `DJNZ`, `CALL`, `RET`, `TSTB`, `NOP`, `HALT` | `CALL` is one level. `TSTB` sets `Z` from the next output bit. `JMP` conditions: always, Z, NZ, F, !F, BC=0, BC≠0, and a spare |
-| Chip | `IRQ`, `TRIG`, `CAPON`, `CAPOFF`, `CAPMARK` | Not yet exercised by any study program |
+| Chip | `IRQ`, `TRIG`, `CAPON`, `CAPOFF`, `CAPMARK` | |
+
+**Not yet run by any study program:** `IRQ`, `TRIG`, `CAPON`, `CAPOFF`, `CAPMARK`, `CMP`, `DLYR`, `PULL` and `TPHASE`. The golden model must test these first.
 
 **Firmware rules found by testing:** set a line's value before `MODE` takes it, or it glitches at startup. Re-arming after a flip needs a frame holdoff, or a data edge reads as a new start bit.
 
