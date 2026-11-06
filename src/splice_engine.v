@@ -112,7 +112,7 @@ module splice_engine (
     tick_q = 1'b0;
     side = 2'b00;
     dly_field = 4'd0;
-    casez (ins)
+    (* parallel_case *) casez (ins)
       16'b000?????????????: op = O_TSET;
       16'b0010????????????: op = O_JMP;
       16'b0011????????????: op = O_CALL;
@@ -240,11 +240,31 @@ module splice_engine (
   wire [15:0] sr_shifted_in = msb[c] ? {sr[c][14:0], in_bit} : {in_bit, sr[c][15:1]};
   wire [4:0]  bc_dec = (bc[c] == 0) ? 5'd0 : bc[c] - 5'd1;
 
+  // ------------------------------------------------------------------ Fast decode
+  // Instruction word to memory address is the longest path in the chip, so everything on it decodes
+  // straight from the opcode bits, and doesn't go through op. Must agree with the table above.
+  wire is_jmp   = ins[15:12] == 4'b0010;
+  wire is_call  = ins[15:12] == 4'b0011;
+  wire is_djnz  = ins[15:11] == 5'b10100;
+  wire is_ret   = ins[15:8] == 8'b11011101;
+  wire is_wait  = ins[15:10] == 6'b101110;
+  wire is_waitt = ins[15:8] == 8'b11100011;
+  wire is_pullw = ins[15:8] == 8'b11011011;
+  wire is_set   = ins[15:11] == 5'b01110;
+  wire is_mode  = ins[15:11] == 5'b01111;
+  wire is_out   = ins[15:11] == 5'b10000;
+  wire is_in    = ins[15:11] == 5'b10001;
+  wire is_bit   = ins[15:12] == 4'b1001;        // OUTB, INB
+  wire is_nop   = ins[15:8] == 8'b11011000;
+  wire is_probe = ins[15:8] == 8'b11011001;
+  wire tick_f = ((is_set || is_out) && ins[5]) || (is_mode && ins[4]) || ((is_in || is_bit) && ins[6])
+             || (is_nop && ins[7]) || (is_probe && ins[3]);
+
   // ------------------------------------------------------------------ Execute conditions
   wire slot = running && !prim;
   wire gated = slot && !halted[c] && stall[c] == 0;
   wire pend_eff = pending[c] || tick_now[c];
-  wire active = gated && (!tick_q || pend_eff);   // reached: a side-set applies
+  wire active = gated && (!tick_f || pend_eff);   // reached: a side-set applies
 
   // WAIT
   wire wait_bit = lines[ln_w];
@@ -262,11 +282,11 @@ module splice_engine (
   wire [15:0] to_dec = to_cur - 16'd1;
   wire        to_on = to[c] != 0;
   wire        to_expired = to_on && to_dec == 0;
-  wire        wait_block = op == O_WAIT && !wait_met && !to_expired;
+  wire        wait_block = is_wait && !wait_met && !to_expired;
 
   wire blocked = wait_block
-              || (op == O_WAITT && !pend_eff)
-              || (op == O_PULLW && h2e_empty);
+              || (is_waitt && !pend_eff)
+              || (is_pullw && h2e_empty);
   wire ex = active && !blocked;
 
   // Next PC. The critical path: read data to the program memory address.
@@ -285,21 +305,27 @@ module splice_engine (
   end
   wire [15:0] djnz_dec = rr[{c, rn_djnz}] - 16'd1;
   wire [8:0]  pc_inc = pc[c] + 9'd1;
-  wire [8:0]  pc_back = pc[c] - {5'd0, ins[3:0]};
 
-  reg [8:0] pc_next;
-  always @* begin
-    pc_next = pc_inc;
-    case (op)
-      O_JMP:  if (take_jmp) pc_next = ins[8:0];
-      O_CALL: pc_next = ins[11:3];
-      O_RET:  pc_next = lr[c];
-      O_DJNZ: if (djnz_dec != 0) pc_next = ins[8:0];
-      O_OUTB, O_INB: if (bc_dec != 0) pc_next = pc_back;
-      default: ;
-    endcase
-    if (!ex) pc_next = pc[c];
-  end
+  // Both are worked out from registers alone, and the instruction only selects. Equal to
+  // djnz_dec != 0 and bc_dec != 0.
+  wire [3:0] loops = {r3_c != 16'd1, r2_c != 16'd1, r1_c != 16'd1, r0_c != 16'd1};
+  wire       djnz_loops = loops[rn_djnz];
+  wire       bc_loops = bc[c] > 5'd1;
+
+  // pc - rel with the high part selected by the borrow, so the instruction doesn't ripple through 9 bits
+  wire [4:0] back_lo = {1'b0, pc[c][3:0]} - {1'b0, ins[3:0]};
+  wire [4:0] pc_hi = pc[c][8:4];
+  wire [4:0] pc_hi_dec = pc_hi - 5'd1;
+  wire [8:0] pc_back = {back_lo[4] ? pc_hi_dec : pc_hi, back_lo[3:0]};
+
+  wire to_target = (is_jmp && take_jmp) || (is_djnz && djnz_loops);
+  wire to_back = is_bit && bc_loops;
+  wire [8:0] pc_taken = to_target ? ins[8:0]
+                      : is_call   ? ins[11:3]
+                      : is_ret    ? lr[c]
+                      : to_back   ? pc_back
+                      :             pc_inc;
+  wire [8:0] pc_next = ex ? pc_taken : pc[c];
 
   assign fetch_addr = prim ? pc[0] : (two_ctx ? pc[!c] : pc_next);
 
@@ -324,7 +350,11 @@ module splice_engine (
   assign cap_mark = ex && op == O_CAPMARK;
 
   // ------------------------------------------------------------------ Clocked state
-  wire [15:0] alu_add = rr[{c, rn_add}] + {8'd0, ins[7:0]};
+  // The immediate is 8 bits, so only the low half adds, and the high half is picked by its carry.
+  wire [15:0] add_reg = rr[{c, rn_add}];
+  wire [8:0]  add_lo = {1'b0, add_reg[7:0]} + {1'b0, ins[7:0]};
+  wire [7:0]  add_hi_inc = add_reg[15:8] + 8'd1;
+  wire [15:0] alu_add = {add_lo[8] ? add_hi_inc : add_reg[15:8], add_lo[7:0]};
   wire [15:0] alu_xor = rr[{c, rn_alu}] ^ opnd_alu;
   wire [15:0] alu_and = rr[{c, rn_alu}] & opnd_alu;
   wire [15:0] lfsr_nx = {1'b0, lfsr[c][15:1]} ^ (lfsr[c][0] ? 16'hB400 : 16'h0000);
