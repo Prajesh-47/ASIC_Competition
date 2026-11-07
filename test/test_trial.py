@@ -1352,3 +1352,372 @@ async def test_eth_receive_code_groups(dut):
     words, trace = await eth_rx_run(dut, [J, K, CODE_4B5B[3], 0x00, CODE_4B5B[4]], 60)
     assert words[:2] == [3, 0x0100], f"invalid group: {[hex(w) for w in words]}"
     assert any((t[0] >> 7) & 1 for t in trace), "RX_ERROR never rose"
+
+
+# ------------------------------------------------------------------ My own picks (weaker evidence: I chose them)
+# ---- MDIO, clause 22
+class Phy:
+    """A PHY register model: samples MDIO on the rising edge of MDC, and drives its data just after that edge."""
+
+    def __init__(self, phyad=3):
+        self.phyad, self.regs, self.sck, self.bits = phyad, {2: 0x1234, 9: 0xBEEF}, 0, []
+        self.drive = None
+        self.queue, self.count, self.ones = [], 0, 0
+
+    def step(self, t, out, oe):
+        sck = (out >> 4) & 1
+        host = (out >> 5) & 1 if (oe >> 5) & 1 else None
+        line = host if host is not None else (self.drive if self.drive is not None else 1)
+        if sck and not self.sck:
+            if self.queue:
+                self.drive = self.queue.pop(0)
+                if not self.queue:
+                    self.after = True
+            elif self.drive is not None and host is None:
+                self.drive = None
+            else:
+                self.bits.append(line)
+                bits = self.bits
+                if len(bits) >= 46 and bits[-46:-14] == [1] * 32 and bits[-14:-12] == [0, 1]:
+                    word = sum(b << (13 - i) for i, b in enumerate(bits[-14:]))
+                    op, ad, reg = (word >> 10) & 3, (word >> 5) & 31, word & 31
+                    if op == 2 and ad == self.phyad:
+                        value = self.regs.get(reg, 0)
+                        self.queue = [0] + [(value >> k) & 1 for k in range(15, -1, -1)]
+                    self.op = (op, ad, reg)
+                    self.write_left = 18 if op == 1 and ad == self.phyad else 0
+                    self.bits = []
+                elif getattr(self, "write_left", 0):
+                    self.write_left -= 1
+                    if self.write_left == 0:
+                        value = sum(b << (15 - i) for i, b in enumerate(bits[-16:]))
+                        self.regs[self.op[2]] = value
+                        self.bits = []
+        self.sck = sck
+        return 0xDF | line << 5
+
+
+def mdio_word(op, phy, reg, ta):
+    return 0b01 << 14 | op << 12 | phy << 7 | reg << 2 | ta
+
+
+async def mdio_run(dut, phy, words, cycles):
+    from test import capture
+    task = cocotb.start_soon(fifo_write(dut, words))  # the program starts clocking as soon as a word arrives
+    trace = await capture(dut, cycles, phy.step)
+    await task
+    return await fifo_all(dut, 8), trace
+
+
+@cocotb.test()
+async def test_mdio_read_write_and_absent_phy(dut):
+    await reset(dut)
+    await load_program(dut, firmware("trial/mdio.s").words)
+    await start(dut)
+    phy = Phy()
+    words, trace = await mdio_run(dut, phy, [mdio_word(2, 3, 9, 0)], 1800)
+    assert words == [0xBEEF, 0xA000], f"read: {[hex(w) for w in words]}"
+    edges = [i for i in range(1, len(trace)) if (trace[i][0] >> 4) & 1 and not (trace[i - 1][0] >> 4) & 1]
+    period = edges[1] - edges[0]
+    dut._log.info(f"MDC period {period} cycles: {50 / period:.2f} MHz, and the standard's limit is 2.5")
+    assert period >= 20
+    words, _ = await mdio_run(dut, phy, [mdio_word(1, 3, 5, 0b10), 0xCAFE], 1800)
+    assert words == [0xA000], f"write: {[hex(w) for w in words]}"
+    assert phy.regs.get(5) == 0xCAFE, f"{phy.regs}"
+    words, _ = await mdio_run(dut, phy, [mdio_word(2, 3, 5, 0)], 1800)
+    assert words == [0xCAFE, 0xA000], f"read back: {[hex(w) for w in words]}"
+    words, _ = await mdio_run(dut, phy, [mdio_word(2, 7, 9, 0)], 1800)
+    assert words == [0xEE00], f"no PHY at that address: {[hex(w) for w in words]}"
+    await stop(dut)
+
+
+# ---- LIN
+LIN_BIT = 2604
+
+
+def lin_pid(identifier):
+    b = [(identifier >> k) & 1 for k in range(6)]
+    p0 = b[0] ^ b[1] ^ b[2] ^ b[4]
+    p1 = 1 - (b[1] ^ b[3] ^ b[4] ^ b[5])
+    return identifier | p0 << 6 | p1 << 7
+
+
+def lin_checksum(data):
+    total = 0
+    for byte in data:
+        total += byte
+        if total > 255:
+            total -= 255
+    return (~total) & 0xFF
+
+
+async def uart_send(bus, byte, bit):
+    bus.drive(0)
+    await wait_cycles(bit)
+    for k in range(8):
+        bus.drive((byte >> k) & 1)
+        await wait_cycles(bit)
+    bus.drive(1)
+    await wait_cycles(bit)
+
+
+async def lin_header(bus, pid, bit, break_bits=13):
+    bus.drive(0)
+    await wait_cycles(break_bits * bit)
+    bus.drive(1)
+    await wait_cycles(bit)
+    await uart_send(bus, 0x55, bit)
+    await wait_cycles(bit)
+    await uart_send(bus, pid, bit)
+
+
+def uart_decode(bus, began, count, bit):
+    """Bytes sampled mid-bit on falling edges after a time, from the recorded line."""
+    out, t = [], began
+    for _ in range(count):
+        falls = bus.falls_after(t)
+        if not falls:
+            break
+        first = falls[0]
+        out.append(sum(bus.sample(round(first + bit * (k + 1.5))) << k for k in range(8)))
+        t = first + bit * 9
+    return out
+
+
+async def lin_start(dut):
+    await stop(dut)
+    await load_program(dut, firmware("trial/lin.s").words)
+    await write_reg(dut, 1, 0x10)
+    await start(dut)
+    bus = Bus(dut, 4)
+    await wait_cycles(200)
+    return bus
+
+
+@cocotb.test()
+async def test_lin_receive_with_auto_baud_and_checksum(dut):
+    """Frames at nominal and off by 10% each way, measured from the sync byte. Then a bad checksum and bad parity."""
+    await reset(dut)
+    for scale, data in ((1.0, [0x12, 0xFE]), (0.9, [0xFF, 0xFF]), (1.1, [0x00, 0x80])):
+        bit = round(LIN_BIT * scale)
+        bus = await lin_start(dut)
+        pid = lin_pid(0x10)
+        await lin_header(bus, pid, bit)
+        for b in data + [lin_checksum([pid] + data)]:
+            await uart_send(bus, b, bit)
+        await wait_cycles(200)
+        got = await fifo_all(dut)
+        assert got == [pid, 0x100 | data[0], 0x100 | data[1], 0xA000], f"at {scale}: {[hex(w) for w in got]}"
+        bus.close()
+    bus = await lin_start(dut)
+    pid = lin_pid(0x10)
+    await lin_header(bus, pid, LIN_BIT)
+    for b in [1, 2, lin_checksum([pid, 1, 2]) ^ 4]:
+        await uart_send(bus, b, LIN_BIT)
+    await wait_cycles(200)
+    assert (await fifo_all(dut))[-1] == 0xC500, "a bad checksum wasn't noticed"
+    bus.close()
+    bus = await lin_start(dut)
+    await lin_header(bus, lin_pid(0x10) ^ 0x40, LIN_BIT)
+    await wait_cycles(200)
+    assert (await fifo_all(dut)) == [0xBAD0], "bad parity wasn't noticed"
+    bus.close()
+
+
+@cocotb.test()
+async def test_lin_responds_and_ignores_a_short_break(dut):
+    await reset(dut)
+    bus = await lin_start(dut)
+    await fifo_write(dut, [0xA5, 0x3C])
+    pid = 0x3C
+    await lin_header(bus, pid, LIN_BIT)
+    began = cycles_now()
+    await wait_cycles(45 * LIN_BIT)
+    assert uart_decode(bus, began, 3, LIN_BIT) == [0xA5, 0x3C, lin_checksum([pid, 0xA5, 0x3C])], f"{uart_decode(bus, began, 3, LIN_BIT)}"
+    assert (await fifo_all(dut)) == [pid, 0xA000]
+    bus.close()
+    bus = await lin_start(dut)
+    bus.drive(0)
+    await wait_cycles(5 * LIN_BIT)
+    bus.drive(1)
+    await wait_cycles(40 * LIN_BIT)
+    assert (await fifo_all(dut)) == [], "treated a short low pulse as a break"
+    bus.close()
+
+
+# ---- SENT
+def sent_crc(nibbles):
+    crc = 5
+    for n in nibbles + [0]:
+        for k in range(3, -1, -1):
+            top = ((crc >> 3) & 1) ^ ((n >> k) & 1)
+            crc = (crc << 1) & 0xF
+            if top:
+                crc ^= 0xD
+    return crc
+
+
+@cocotb.test()
+async def test_sent_transmit_frame(dut):
+    """Falling-edge intervals give every nibble, in ticks, and CRC-4 comes from a separate calculation."""
+    await reset(dut)
+    await load_program(dut, firmware("trial/sent_tx.s").words)
+    await start(dut)
+    bus = Bus(dut, 4)
+    status, data = 0x9, [0x1, 0x2, 0xA, 0xF, 0x0, 0x7]
+    await fifo_write(dut, [status << 12 | data[0] << 8 | data[1] << 4 | data[2], data[3] << 12 | data[4] << 8 | data[5] << 4])
+    await wait_cycles(150 * (56 + 12 * 9 + 15 * 9 + 20))
+    falls = bus.falls_after(0)
+    ticks = [(b - a) / 150 for a, b in zip(falls, falls[1:])]
+    assert len(ticks) >= 9, f"{ticks}"
+    assert all(abs(t - round(t)) < 0.05 for t in ticks[:9]), f"timing isn't on the tick grid: {ticks[:9]}"
+    ticks = [round(t) for t in ticks]
+    assert ticks[0] == 56, f"sync is {ticks[0]} ticks"
+    values = [t - 12 for t in ticks[1:9]]
+    assert values[0] == status and values[1:7] == data, f"{values}"
+    assert values[7] == sent_crc(data), f"CRC {values[7]}, expected {sent_crc(data)}"
+    bus.close()
+    await stop(dut)
+
+
+# ---- HDMI-CEC
+CEC_TICK = 5000
+
+
+def cec_bits(blocks):
+    out = []
+    for i, block in enumerate(blocks):
+        out += [(block >> k) & 1 for k in range(7, -1, -1)] + [int(i == len(blocks) - 1), 1]
+    return out
+
+
+async def cec_send_bit(bus, bit):
+    low = 1.5 if bit == 0 else 0.6
+    bus.drive(0)
+    await wait_cycles(low * 50000)
+    bus.drive(1)
+    await wait_cycles((2.4 - low) * 50000)
+
+
+def cec_read_frame(bus, first):
+    """From the recorded line: the start bit's width, then each bit's low time, as a device would measure."""
+    falls = bus.falls_after(first)
+    rises = [t for t, level in bus.history if level == 1 and t >= first]
+    widths = []
+    for f in falls:
+        r = next((x for x in rises if x > f), None)
+        widths.append(((r - f) / 50000) if r else None)
+    return falls, widths
+
+
+async def cec_start_prog(dut, name):
+    await stop(dut)
+    await load_program(dut, firmware(name).words)
+    await write_reg(dut, 1, 0x10)
+    await start(dut)
+    bus = Bus(dut, 4)
+    await wait_cycles(100)
+    return bus
+
+
+@cocotb.test()
+async def test_cec_initiator_frame_and_ack(dut):
+    """Exact bit widths, with a follower model that ACKs. Then the same with no follower."""
+    await reset(dut)
+    bus = await cec_start_prog(dut, "trial/cec_initiator.s")
+    began = cycles_now()
+    await fifo_write(dut, [0x40 << 8, 0x36 << 8 | 1])
+
+    async def follower():
+        """ACK: hold low from the falling edge of each ACK bit to 1.5 ms."""
+        seen = 0
+        while seen < 21:
+            falls = bus.falls_after(began)
+            if len(falls) > seen:
+                index, seen = seen, seen + 1
+                if index in (10, 20):
+                    bus.drive(0)
+                    await wait_cycles(1.5 * 50000 - 500)
+                    bus.drive(1)
+            await wait_cycles(200)
+
+    task = cocotb.start_soon(follower())
+    await wait_cycles(70 * CEC_TICK + 22 * 2.4 * 50000 + 4.5 * 50000 + 40000)
+    task.cancel()
+    falls, widths = cec_read_frame(bus, began)
+    assert 3.6 <= widths[0] <= 3.8, f"start bit low for {widths[0]:.2f} ms"
+    assert 4.3 <= (falls[1] - falls[0]) / 50000 <= 4.7, "start bit period"
+    wanted = cec_bits([0x40, 0x36])
+    for i, b in enumerate(wanted[:-1]):
+        if i in (9, 19):
+            continue
+        low = widths[i + 1]
+        assert abs(low - (1.5 if not b else 0.6)) < 0.11, f"bit {i} was low for {low:.2f} ms, wanted {b}"
+        period = (falls[i + 2] - falls[i + 1]) / 50000
+        assert abs(period - 2.4) < 0.11, f"bit {i} took {period:.2f} ms"
+    assert await fifo_all(dut) == [0xA000], "the frame should have finished acknowledged"
+    bus.close()
+
+    bus = await cec_start_prog(dut, "trial/cec_initiator.s")
+    await fifo_write(dut, [0x40 << 8 | 1])
+    await wait_cycles(70 * CEC_TICK + 12 * 2.4 * 50000 + 4.5 * 50000)
+    assert await fifo_all(dut) == [0x0E00], "no ACK should be reported"
+    bus.close()
+
+
+@cocotb.test()
+async def test_cec_arbitration_lost(dut):
+    """Another initiator sends a 0 where we send a 1: we must stop driving and report it."""
+    await reset(dut)
+    bus = await cec_start_prog(dut, "trial/cec_initiator.s")
+    began = cycles_now()
+    await fifo_write(dut, [0xF0 << 8 | 1])
+    while not bus.falls_after(began):
+        await wait_cycles(2000)
+    first = bus.falls_after(began)[0]
+    await wait_cycles(first + 4.5 * 50000 - cycles_now())
+    bus.drive(0)  # our first data bit is a 1. Theirs is a 0
+    await wait_cycles(1.5 * 50000)
+    bus.drive(1)
+    await wait_cycles(0.9 * 50000 + 2 * 50000)
+    assert bus.own() == 1, "still driving after losing"
+    assert await fifo_all(dut) == [0xAB00]
+    bus.close()
+
+
+@cocotb.test()
+async def test_cec_follower_receives_and_acks(dut):
+    await reset(dut)
+    bus = await cec_start_prog(dut, "trial/cec_follower.s")
+
+    async def frame(blocks):
+        bus.drive(0)
+        await wait_cycles(3.7 * 50000)
+        bus.drive(1)
+        await wait_cycles(0.8 * 50000)
+        acks = []
+        for i, b in enumerate(cec_bits(blocks)):
+            if (i + 1) % 10 == 0:  # ACK bit: send a 1, and read it at 1.05 ms
+                bus.drive(0)
+                await wait_cycles(0.6 * 50000)
+                bus.drive(1)
+                await wait_cycles(0.45 * 50000)
+                acks.append(bus.level == 0)
+                await wait_cycles(1.35 * 50000)
+            else:
+                await cec_send_bit(bus, b)
+        return acks
+
+    assert await frame([0x34, 0x82]) == [True, True], "a block addressed to us must be acknowledged"
+    await wait_cycles(10000)
+    got = await fifo_all(dut)
+    assert got == [0x34, 0x100 | 0x82], f"{[hex(w) for w in got]}"
+    assert await frame([0x35]) == [False], "someone else's block must not be acknowledged"
+    await wait_cycles(10000)
+    assert await fifo_all(dut) == [0x100 | 0x35]
+    bus.drive(0)
+    await wait_cycles(1 * 50000)
+    bus.drive(1)
+    await wait_cycles(4 * 50000)
+    assert await fifo_all(dut) == [0xBAD0], "a short low pulse isn't a start bit"
+    bus.close()
