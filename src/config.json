@@ -17,8 +17,6 @@
 
   "//": "Experiment: spend the spare area on timing. Baseline is AREA 0 with these repairs off.",
   "SYNTH_STRATEGY": "DELAY 1",
-  "SYNTH_ABC_BUFFERING": true,
-  "SYNTH_SIZING": true,
   "PL_TIMING_DRIVEN": true,
   "RUN_POST_GRT_RESIZER_TIMING": true,
   "RUN_POST_GRT_DESIGN_REPAIR": true,
