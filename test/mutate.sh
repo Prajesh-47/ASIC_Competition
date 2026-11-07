@@ -19,7 +19,13 @@ open(path, "w").write(s.replace(a, b, 1))
 PY
   then echo "NOT APPLIED  $name" | tee -a "$OUT"; rm -rf "$dir"; return; fi
   rm -rf sim_build results.xml
-  make SRC_DIR="$dir" >/dev/null 2>&1
+  # A mutant can make a test loop forever. Never finishing counts as caught, since the real suite finishes.
+  timeout "${MUTANT_LIMIT:-1200}" make SRC_DIR="$dir" >/dev/null 2>&1
+  if [ $? -eq 124 ]; then
+    echo "caught(hang) $name" | tee -a "$OUT"
+    rm -rf "$dir"
+    return
+  fi
   if python -m cocotb_tools.check_results results.xml >/dev/null 2>&1; then
     echo "SURVIVED     $name" | tee -a "$OUT"
   else
