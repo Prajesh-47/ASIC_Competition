@@ -52,7 +52,8 @@ by simulation only. The proofs cover logic, not pad thresholds or analog behavio
 
 Run in a clean copy of the repository. In the last full run, 41 of 43 mutants were caught. The 2 survivors were
 real test gaps. They were fixed, as listed below, and rerunning them confirmed both are now caught, along with 2
-mutants added since. That rerun covered only those 4, so a full rerun of all 45 is still to do.
+mutants added since. A full rerun of all 45 on the rewritten engine (branch `exp/timing-rtl`) then caught every
+one, 2 of them because they made a test run forever, which `mutate.sh` now counts as caught after 20 minutes.
 
 ## What the checks found
 
