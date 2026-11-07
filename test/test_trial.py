@@ -810,3 +810,336 @@ async def test_spdif_transmit_known_preambles_and_block(dut):
     assert not wrong, f"{len(wrong)} of {n} subframes wrong, first {wrong[0]}: {got[wrong[0]][1]} vs {payloads[wrong[0]]}"
 
     assert abs(khz - 48) / 48 < 0.001, f"{khz:.3f} kHz is outside IEC's 0.1% tolerance"
+
+
+# ------------------------------------------------------------------ SD, native bus mode
+def crc7(data):
+    crc = 0
+    for byte in data:
+        for k in range(7, -1, -1):
+            top = ((crc >> 6) & 1) ^ ((byte >> k) & 1)
+            crc = (crc << 1) & 0x7F
+            if top:
+                crc ^= 0x09
+    return crc
+
+
+def crc16_bits(bits):
+    """CRC-16 of one data line: x^16 + x^12 + x^5 + 1, from zero."""
+    crc = 0
+    for b in bits:
+        top = ((crc >> 15) & 1) ^ b
+        crc = (crc << 1) & 0xFFFF
+        if top:
+            crc ^= 0x1021
+    return crc
+
+
+def block_nibbles(data):
+    return [n for byte in data for n in (byte >> 4, byte & 15)]
+
+
+def line_crcs(nibbles):
+    """One CRC per line, indexed by DAT number."""
+    return [crc16_bits([(n >> line) & 1 for n in nibbles]) for line in range(4)]
+
+
+def crc_nibbles(crcs):
+    return [sum(((crcs[line] >> k) & 1) << line for line in range(4)) for k in range(15, -1, -1)]
+
+
+class SdCard:
+    """Behaviour from the Physical Layer Simplified Specification: commands sampled on the rising edge,
+    response and read data changing on the falling edge."""
+
+    def __init__(self, block=None):
+        self.block = block or [(i * 7 + 3) & 0xFF for i in range(512)]
+        self.commands, self.raw, self.written, self.write_status = [], [], None, None
+        self.shift, self.response, self.dat_queue = [], [], []
+        self.cmd, self.dat = 1, 0xF
+        self.sck, self.wait = 0, 0
+        self.silent = set()
+        self.bad_crc7 = False
+        self.flip_read = None
+        self.stuck_low = None
+        self.collect, self.after_response = None, None
+        self.clock_edges = []
+        self.acmd = False
+
+    def reply(self, index, payload, crc=True):
+        bytes_ = [index & 0x3F] + payload
+        code = crc7(bytes_) if crc else 0x7F
+        if self.bad_crc7:
+            code ^= 1
+        whole = bytes_ + [code << 1 | 1]
+        return [(b >> k) & 1 for b in whole for k in range(7, -1, -1)]
+
+    def handle(self, frame):
+        data = [sum(frame[i + k] << (7 - k) for k in range(8)) for i in range(0, 48, 8)]
+        self.raw.append(data)
+        index = data[0] & 0x3F
+        assert data[0] & 0xC0 == 0x40, f"bad start or direction bits: {data}"
+        assert frame[-1] == 1, "no end bit"
+        assert crc7(data[:5]) == data[5] >> 1, f"host sent a wrong CRC-7: {[hex(b) for b in data]}"
+        self.commands.append(("A" if self.acmd else "") + str(index))
+        was_app, self.acmd = self.acmd, index == 55
+        argument = data[1:5]
+        if index in self.silent or index == 0:
+            return
+        status = [0, 0, 1, 0x20 if self.acmd else 0]
+        if index == 8:
+            self.response = self.reply(8, argument)
+        elif index == 55:
+            self.response = self.reply(55, status)
+        elif index == 41 and was_app:
+            self.response = self.reply(0x3F, [0xC0, 0xFF, 0x80, 0x00], crc=False)
+        elif index == 2:
+            cid = [(i * 11 + 1) & 0xFF for i in range(15)]
+            whole = [0x3F] + cid + [crc7(cid) << 1 | 1]
+            self.response = [(b >> k) & 1 for b in whole for k in range(7, -1, -1)]
+        elif index == 3:
+            self.response = self.reply(3, [0x12, 0x34, 0x05, 0x00])
+        elif index == 7:
+            self.response = self.reply(7, status)
+        elif index == 17:
+            self.response = self.reply(17, status)
+            self.after_response = "read"
+        elif index == 24:
+            self.response = self.reply(24, status)
+            self.after_response = "write"
+        self.response = [1, 1] + self.response  # NCR is at least 2 clocks
+
+    def read_sequence(self):
+        nibbles = block_nibbles(self.block)
+        tail = crc_nibbles(line_crcs(nibbles))
+        out = [0xF] * 3 + [0] + nibbles + tail + [0xF]
+        if self.flip_read is not None:
+            out[4 + self.flip_read] ^= 1
+        return out
+
+    def step(self, t, out, oe):
+        sck = (out >> 4) & 1 if (oe >> 4) & 1 else 0
+        host_cmd = (out >> 5) & 1 if (oe >> 5) & 1 else 1
+        host_dat = 0
+        for line in range(4):
+            host_dat |= ((out >> line) & 1 if (oe >> line) & 1 else 1) << line
+        hosts_dat = oe & 0xF
+        if self.stuck_low is not None:
+            host_dat &= ~(1 << self.stuck_low)
+
+        if sck and not self.sck:
+            self.clock_edges.append(t)
+            if self.collect is not None:
+                self.collect.append(host_dat)
+                self.check_write()
+            elif not self.response and (oe >> 5) & 1:
+                if self.shift or host_cmd == 0:
+                    self.shift.append(host_cmd)
+                    if len(self.shift) == 48:
+                        frame, self.shift = self.shift, []
+                        self.handle(frame)
+        if not sck and self.sck:
+            if self.response:
+                self.cmd = self.response.pop(0)
+                if not self.response:
+                    self.finish_response = True
+            else:
+                self.cmd = 1
+                if self.after_response == "read":
+                    self.dat_queue = self.read_sequence()
+                    self.after_response = None
+                elif self.after_response == "write":
+                    self.collect = []
+                    self.after_response = None
+            self.dat = self.dat_queue.pop(0) if self.dat_queue else 0xF
+        self.sck = sck
+
+        dat = (self.dat & 0xF & ~hosts_dat) | (host_dat & hosts_dat)
+        if self.stuck_low is not None:
+            dat &= ~(1 << self.stuck_low)
+        cmd = host_cmd if (oe >> 5) & 1 else self.cmd
+        return 0xD0 | dat | cmd << 5 | (sck << 4)
+
+    def check_write(self):
+        seen = self.collect
+        started = next((i for i, v in enumerate(seen) if v == 0), None)
+        if started is None:
+            if len(seen) > 40:
+                self.collect = None
+            return
+        body = seen[started + 1:]
+        if len(body) < 1024 + 16 + 1:
+            return
+        nibbles = body[:1024]
+        tail = body[1024:1040]
+        self.written = [nibbles[i] << 4 | nibbles[i + 1] for i in range(0, 1024, 2)]
+        good = crc_nibbles(line_crcs(nibbles)) == tail and body[1040] == 0xF
+        self.write_status = 0b010 if good else 0b101
+        token = [0, (self.write_status >> 2) & 1, (self.write_status >> 1) & 1, self.write_status & 1, 1]
+        self.dat_queue = [0xF, 0xF] + [0xE | b for b in token] + [0xE] * 8
+        self.collect = None
+
+
+async def sd_run(dut, card, script, cycles=120_000, half=4):
+    """Runs (op, command bytes, then-word, data words) entries. Returns everything the FIFO gave."""
+    from test import capture
+    import test as host
+    saved, host.HALF = host.HALF, half
+    words, done = [], []
+    feed = []
+    for typ, cmd, then, data in script:
+        feed += [typ, cmd[0] << 8 | cmd[1], cmd[2] << 8 | cmd[3], cmd[4] << 8]
+        if then is not None:
+            feed.append(then)
+        feed += data
+
+    async def driver():
+        while feed or not done:
+            status = (await spi_xfer(dut, [0x12, 0]))[1]
+            if feed and not status & 0x08:
+                await fifo_write(dut, [feed.pop(0)])
+            if not status & 0x10:
+                words.extend(await fifo_read(dut, 1))
+            if done:
+                break
+
+    task = cocotb.start_soon(driver())
+    await capture(dut, cycles, card.step)
+    done.append(True)
+    await task
+    for _ in range(8):
+        if (await spi_xfer(dut, [0x12, 0]))[1] & 0x10:
+            break
+        words.extend(await fifo_read(dut, 1))
+    host.HALF = saved
+    return words
+
+
+async def sd_start(dut, half=20):
+    await stop(dut)
+    await load_program(dut, firmware("trial/sd_host.s", HALF=half).words)
+    await start(dut)
+
+
+def cmd_bytes(index, arg=0):
+    return [0x40 | index, (arg >> 24) & 255, (arg >> 16) & 255, (arg >> 8) & 255, arg & 255]
+
+
+@cocotb.test()
+async def test_sd_initialization_and_responses(dut):
+    """The plan's vector, CMD0 = 40 00 00 00 00 95 on the wire, and then R7, R1, R3, R2 and R6."""
+    await reset(dut)
+    await sd_start(dut)
+    card = SdCard()
+    words = await sd_run(dut, card, [
+        (0, cmd_bytes(0), None, []),
+        (1, cmd_bytes(8, 0x1AA), 0, []),
+        (1, cmd_bytes(55), 0, []),
+        (2, cmd_bytes(41, 0x40FF8000), 0, []),
+        (3, cmd_bytes(2), 0, []),
+        (1, cmd_bytes(3), 0, []),
+    ], cycles=60_000)
+    assert card.raw[0] == [0x40, 0, 0, 0, 0, 0x95], f"CMD0 on the wire: {[hex(b) for b in card.raw[0]]}"
+    assert card.commands == ["0", "8", "55", "A41", "2", "3"], f"{card.commands}"
+    # R7, R1, R3, then R2, then R6: 3 words and a status each, and 9 words and a status for R2
+    assert len(words) == 4 + 4 + 4 + 10 + 4, f"{[hex(w) for w in words]}"
+    assert words[3] == words[7] == words[11] == words[21] == words[25] == 0xA000, f"{[hex(w) for w in words]}"
+    assert (words[0] >> 8) & 0x3F == 8 and words[1] == 0x0000 | 0x0001 and words[2] >> 8 == 0xAA, f"R7 {[hex(w) for w in words[:3]]}"
+    assert (words[8] >> 8) == 0x3F and (words[8] & 0xFF) == 0xC0, f"R3 {[hex(w) for w in words[8:11]]}"
+    assert words[12] >> 8 == 0x3F, f"R2 {hex(words[12])}"
+
+
+def sd_block_from_words(words):
+    """256 data words and 4 CRC words, as sampled: DAT3..DAT0 per nibble, oldest highest."""
+    nibbles = [(w >> k) & 15 for w in words[:256] for k in (12, 8, 4, 0)]
+    tail = [(w >> k) & 15 for w in words[256:260] for k in (12, 8, 4, 0)]
+    return nibbles, tail
+
+
+def sd_clock_periods(edges):
+    return [b - a for a, b in zip(edges, edges[1:])]
+
+
+@cocotb.test()
+async def test_sd_read_block_four_bits(dut):
+    """CMD17 and a whole 512-byte block on all four lines, with CRC-16 per line. Measures the real clock."""
+    await reset(dut)
+    await sd_start(dut)
+    card = SdCard()
+    words = await sd_run(dut, card, [(1, cmd_bytes(17, 0), 1, [])], cycles=150_000)
+    assert words[3] == 0xA000, f"{[hex(w) for w in words[:5]]}"
+    data = words[4:264]
+    nibbles, tail = sd_block_from_words(data)
+    wanted = block_nibbles(card.block)
+    assert nibbles == wanted, f"first difference at nibble {next(i for i, (a, b) in enumerate(zip(nibbles, wanted)) if a != b)}"
+    assert tail == crc_nibbles(line_crcs(nibbles)), "CRC-16 doesn't match"
+    assert words[264] == 0xA500, f"{hex(words[264])}"
+    periods = sd_clock_periods(card.clock_edges)
+    fastest = min(periods)
+    dut._log.info(f"SD read: fastest clock {50 / fastest:.2f} MHz, required 25. Whole block took {card.clock_edges[-1] - card.clock_edges[0]} cycles")
+
+
+@cocotb.test()
+async def test_sd_write_block_four_bits(dut):
+    """CMD24 and a whole block. The card model checks each line's CRC-16 and sends its status token."""
+    await reset(dut)
+    await sd_start(dut)
+    card = SdCard()
+    block = [(i * 13 + 5) & 0xFF for i in range(512)]
+    nibbles = block_nibbles(block)
+    tail = crc_nibbles(line_crcs(nibbles))
+    data = [block[i] << 8 | block[i + 1] for i in range(0, 512, 2)]
+    data += [tail[i] << 12 | tail[i + 1] << 8 | tail[i + 2] << 4 | tail[i + 3] for i in range(0, 16, 4)]
+    words = await sd_run(dut, card, [(1, cmd_bytes(24, 0), 2, data)], cycles=180_000)
+    assert card.written == block, "the card received different data"
+    assert card.write_status == 0b010
+    assert 0xA502 in words, f"{[hex(w) for w in words]}"
+    periods = sd_clock_periods(card.clock_edges)
+    dut._log.info(f"SD write: fastest clock {50 / min(periods):.2f} MHz, required 25")
+
+
+@cocotb.test()
+async def test_sd_detects_corruption_and_recovers_from_silence(dut):
+    await reset(dut)
+    await sd_start(dut)
+    card = SdCard()
+    card.bad_crc7 = True
+    words = await sd_run(dut, card, [(1, cmd_bytes(8, 0x1AA), 0, [])], cycles=12_000)
+    assert 0xC700 in words, f"a bad response CRC wasn't noticed: {[hex(w) for w in words]}"
+
+    await sd_start(dut)
+    card = SdCard()
+    card.silent = {8}
+    words = await sd_run(dut, card, [(1, cmd_bytes(8, 0x1AA), None, []), (1, cmd_bytes(55), 0, [])], cycles=30_000)
+    assert words[0] == 0xEE00, f"no timeout: {[hex(w) for w in words]}"
+    assert 0xA000 in words, f"didn't recover after the timeout: {[hex(w) for w in words]}"
+
+    await sd_start(dut)
+    card = SdCard()
+    card.flip_read = 100
+    words = await sd_run(dut, card, [(1, cmd_bytes(17, 0), 1, [])], cycles=150_000)
+    nibbles, tail = sd_block_from_words(words[4:264])
+    assert tail != crc_nibbles(line_crcs(nibbles)), "CRC-16 should catch a flipped data bit"
+
+
+@cocotb.test()
+async def test_sd_dat_line_fault(dut):
+    """DAT2 stuck low during a transfer, in each direction."""
+    await reset(dut)
+    await sd_start(dut)
+    card = SdCard()
+    card.stuck_low = 2
+    words = await sd_run(dut, card, [(1, cmd_bytes(17, 0), 1, [])], cycles=150_000)
+    nibbles, tail = sd_block_from_words(words[4:264])
+    assert tail != crc_nibbles(line_crcs(nibbles)) or nibbles != block_nibbles(card.block), "the fault went unnoticed"
+
+    await sd_start(dut)
+    card = SdCard()
+    card.stuck_low = 2
+    block = [0xFF] * 512
+    nibbles = block_nibbles(block)
+    tail = crc_nibbles(line_crcs(nibbles))
+    data = [0xFFFF] * 256 + [tail[i] << 12 | tail[i + 1] << 8 | tail[i + 2] << 4 | tail[i + 3] for i in range(0, 16, 4)]
+    words = await sd_run(dut, card, [(1, cmd_bytes(24, 0), 2, data)], cycles=180_000)
+    assert card.write_status == 0b101, f"card status {card.write_status}"
+    assert 0xA505 in words, f"{[hex(w) for w in words]}"
