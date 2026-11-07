@@ -504,3 +504,309 @@ async def test_hdlc_sustained_full_duplex(dut):
     at_10 = await hdlc_sustained(dut, 5, True, True)
     dut._log.info(f"full duplex at core/10: {'keeps up' if at_10 else 'falls behind'}")
     assert await hdlc_sustained(dut, 4, True, True), "full duplex at core/8"
+
+
+# ------------------------------------------------------------------ S/PDIF (IEC 60958, 48 kHz stereo)
+# Preamble states after a 0, from the plan and checked against the AES3 table.
+PRE = {"M": [1, 1, 1, 0, 0, 0, 1, 0], "W": [1, 1, 1, 0, 0, 1, 0, 0], "B": [1, 1, 1, 0, 1, 0, 0, 0]}
+STATES_PER_SECOND = 6_144_000
+FRAME_CYCLES = 50_000_000 / 48_000
+
+
+def spdif_payload(n, audio=None):
+    """Slots 4-31 as bits, oldest first: 24 audio, V, U, C, even parity. The parity covers slots 4-30."""
+    sample = (n * 0x1B5A7 + 0x35) & 0xFFFFFF if audio is None else audio
+    bits = [(sample >> k) & 1 for k in range(24)] + [n % 3 == 0, n % 5 == 0, n % 7 == 0]
+    bits = [int(b) for b in bits]
+    return bits + [sum(bits) & 1]
+
+
+def spdif_states(subframes, first=0, invert=False):
+    """Biphase-mark states for subframes of (preamble name, 28 bits). Written from the coding rules."""
+    out, level = [], 0
+    for name, bits in subframes:
+        pre = PRE[name] if level == 0 else [1 - s for s in PRE[name]]
+        out += pre
+        level = out[-1]
+        for b in bits:
+            level = 1 - level
+            out.append(level)
+            if b:
+                level = 1 - level
+            out.append(level)
+    return [1 - s for s in out] if invert else out
+
+
+def spdif_stream(count, start=0):
+    """count subframes starting at index start in a block of 384: B, W, M, W, ..."""
+    out = []
+    for i in range(start, start + count):
+        name = "B" if i % 384 == 0 else ("W" if i % 2 else "M")
+        out.append((name, spdif_payload(i)))
+    return out
+
+
+def spdif_wave(states, rate=1.0, lead=120):
+    """Level per clock cycle, with the state timing rounded to the 20 ns grid."""
+    per_state = 50_000_000 / STATES_PER_SECOND / rate
+    total = round(len(states) * per_state)
+    wave, index = [states[0] ^ 1] * lead, 0
+    for cycle in range(total):
+        while (index + 1) * per_state <= cycle and index + 1 < len(states):
+            index += 1
+        wave.append(states[index])
+    return wave
+
+
+def spdif_decode_words(words):
+    """FIFO words to (preamble, 28 bits): a bit is 1 when its sample equals the one before."""
+    out = []
+    for i in range(0, len(words) - 1, 2):
+        first, second = words[i], words[i + 1]
+        states = [(first >> k) & 1 for k in range(15, 11, -1)]
+        samples = [(first >> k) & 1 for k in range(11, -1, -1)] + [(second >> k) & 1 for k in range(15, -1, -1)]
+        code = (states[0] << 3 | states[1] << 2 | states[2] << 1 | states[3])
+        name = {0b0010: "M", 0b1101: "M", 0b0100: "W", 0b1011: "W", 0b1000: "B", 0b0111: "B"}.get(code, "?")
+        prev, bits = states[3], []
+        for s in samples:
+            bits.append(int(s == prev))
+            prev = s
+        out.append((name, bits))
+    return out
+
+
+async def spdif_receive(dut, wave, half=4, rate=1.0):
+    """Plays a stream into RX with a host at the fastest SPI allowed. Returns words and the trace.
+    Pairs come every 520 cycles, and reading one takes 320. So after the first pair the host reads on a timer,
+    as a real host synced to the stream would. Polling as well would not fit."""
+    from test import capture
+    import test as host
+    saved, host.HALF = host.HALF, half
+    words, done = [], []
+    period = FRAME_CYCLES / 2 / rate
+
+    async def reader():
+        while not done:
+            if not (await spi_xfer(dut, [0x12, 0]))[1] & 0x10:
+                break
+        await wait_cycles(280)
+        began, pairs = cycles_now(), 0
+        while not done:
+            words.extend(await fifo_read(dut, 2))
+            pairs += 1
+            await wait_cycles(began + pairs * period - cycles_now())
+        # What's left once the stream has stopped
+        for _ in range(6):
+            if (await spi_xfer(dut, [0x12, 0]))[1] & 0x10:
+                break
+            words.extend(await fifo_read(dut, 1))
+
+    task = cocotb.start_soon(reader())
+    trace = await capture(dut, len(wave) + 200, lambda t, o, e: 0xFE | (wave[t] if t < len(wave) else wave[-1]))
+    done.append(True)
+    await task
+    host.HALF = saved
+    return words, trace
+
+
+async def spdif_rx_start(dut):
+    await stop(dut)
+    await load_program(dut, firmware("trial/spdif_rx.s").words)
+    await start(dut)
+
+
+async def spdif_rx_run(dut, subframes, rate=1.0, invert=False):
+    await spdif_rx_start(dut)
+    wave = spdif_wave(spdif_states(subframes, invert=invert), rate)
+    words, trace = await spdif_receive(dut, wave, rate=rate)
+    await stop(dut)
+    return words, trace
+
+
+def spdif_locked_tail(decoded, sent):
+    """The receiver may join late, so find where its output lines up with what was sent."""
+    if not decoded:
+        return None
+    for skip in range(0, min(12, len(sent))):
+        if decoded[0] == sent[skip]:
+            return skip
+    return None
+
+
+@cocotb.test()
+async def test_spdif_receive_decodes_two_frames_worth(dut):
+    """Decode of every field, including at the block start."""
+    await reset(dut)
+    sent = spdif_stream(24)
+    words, _ = await spdif_rx_run(dut, sent)
+    got = spdif_decode_words(words)
+    skip = spdif_locked_tail(got, sent)
+    assert skip is not None, f"never lined up: {got[:2]}"
+    n = min(len(got), len(sent) - skip)
+    assert n >= 16, f"only {n} subframes"
+    assert got[:n] == sent[skip:skip + n], f"{sum(a != b for a, b in zip(got, sent[skip:]))} subframes wrong of {n}"
+
+
+@cocotb.test()
+async def test_spdif_receive_block_of_192_frames(dut):
+    """More than a whole block: B must appear exactly every 384 subframes, and no data may be lost."""
+    await reset(dut)
+    sent = spdif_stream(384 + 40)
+    words, trace = await spdif_rx_run(dut, sent)
+    got = spdif_decode_words(words)
+    skip = spdif_locked_tail(got, sent)
+    assert skip is not None
+    n = min(len(got), len(sent) - skip)
+    wrong = sum(a != b for a, b in zip(got[:n], sent[skip:skip + n]))
+    dut._log.info(f"block: {n} subframes decoded, {wrong} wrong, joined after {skip}")
+    assert n >= 384 and wrong == 0, f"{n} subframes, {wrong} wrong"
+    clean = trace[3000:-800]  # the receiver rightly loses sync once the stream stops at the end
+    assert not any((t[0] >> 5) & 1 for t in clean), "ERR set on a clean stream"
+    assert not any((t[0] >> 6) & 1 for t in clean), "PERR set on a clean stream"
+    assert any((t[0] >> 7) & 1 for t in trace), "SYNC never showed the block start"
+
+
+@cocotb.test()
+async def test_spdif_receive_polarity_inverted(dut):
+    await reset(dut)
+    sent = spdif_stream(24)
+    words, _ = await spdif_rx_run(dut, sent, invert=True)
+    got = spdif_decode_words(words)
+    skip = spdif_locked_tail(got, sent)
+    assert skip is not None, "no lock on an inverted stream"
+    n = min(len(got), len(sent) - skip)
+    assert n >= 16 and got[:n] == sent[skip:skip + n]
+
+
+@cocotb.test()
+async def test_spdif_receive_clock_drift(dut):
+    """The sender's clock off by each amount. Records the widest that holds, and needs IEC's 0.1% at least."""
+    await reset(dut)
+    results = {}
+    for offset in (-0.03, -0.02, -0.01, -0.001, 0.001, 0.01, 0.02, 0.03):
+        sent = spdif_stream(40)
+        words, _ = await spdif_rx_run(dut, sent, rate=1 + offset)
+        got = spdif_decode_words(words)
+        skip = spdif_locked_tail(got, sent)
+        n = 0 if skip is None else min(len(got), len(sent) - skip)
+        results[offset] = skip is not None and n >= 30 and got[:n] == sent[skip:skip + n]
+    dut._log.info(f"drift tolerance: {results}")
+    assert results[-0.001] and results[0.001], f"{results}"
+
+
+@cocotb.test()
+async def test_spdif_receive_flags_parity_and_preamble_errors(dut):
+    """One audio bit flipped with parity left alone, then one state of an M preamble changed."""
+    await reset(dut)
+    sent = spdif_stream(24)
+    name, bits = sent[12]
+    sent[12] = (name, [bits[0] ^ 1] + bits[1:])
+    _, trace = await spdif_rx_run(dut, sent)
+    wave_at = [i for i, t in enumerate(trace) if (t[0] >> 6) & 1]
+    assert wave_at, "parity error wasn't flagged"
+    frame = len(wave_at) / (FRAME_CYCLES / 2)
+    assert frame < 2, f"PERR stayed high for {frame:.1f} subframes"
+
+    sent = spdif_stream(24)
+    states = spdif_states(sent)
+    m_at = 32 * 2 * 8  # the 9th subframe is an M
+    assert sent[8][0] == "M"
+    states[m_at + 5] ^= 1
+    wave = spdif_wave(states)
+    await spdif_rx_start(dut)
+    words, trace = await spdif_receive(dut, wave)
+    await stop(dut)
+    assert any((t[0] >> 5) & 1 for t in trace), "a damaged M preamble wasn't noticed"
+
+
+def spdif_read_line(levels):
+    """States from a recorded line, using edges only, as an independent receiver would."""
+    edges = [i for i in range(1, len(levels)) if levels[i] != levels[i - 1]]
+    runs = [b - a for a, b in zip(edges, edges[1:])]
+    states = []
+    level = levels[edges[0]]
+    for run in runs:
+        count = 1 if run <= 12 else 2 if run <= 20 else 3
+        states += [level] * count
+        level = 1 - level
+    return states, edges, runs
+
+
+def spdif_split(states):
+    """Finds preambles by their run of three, and returns (name, 28 bits, last state before)."""
+    out, i = [], 0
+    while i + 3 <= len(states) and not (states[i] == states[i + 1] == states[i + 2]):
+        i += 1
+    while i + 64 <= len(states):
+        pre = states[i:i + 8]
+        norm = pre if pre[0] == 1 else [1 - s for s in pre]
+        name = next((k for k, v in PRE.items() if v == norm), "?")
+        bits = []
+        for slot in range(28):
+            a, b = states[i + 8 + 2 * slot], states[i + 9 + 2 * slot]
+            bits.append(int(a != b))
+        out.append((name, bits))
+        i += 64
+    return out
+
+
+async def spdif_transmit(dut, subframes_count):
+    from test import capture
+    import test as host
+    saved, host.HALF = host.HALF, 4
+    feed = []
+    payloads = []
+    for i in range(subframes_count):
+        sent = spdif_payload(i)
+        payloads.append(sent)
+        word1 = sum(b << k for k, b in enumerate(sent[:12]))
+        word2 = sum(b << k for k, b in enumerate(sent[12:27]))
+        feed += [word1, word2]
+    await stop(dut)
+    await load_program(dut, firmware("trial/spdif_tx.s").words)
+    await fifo_write(dut, feed[:4])
+    fed = 4
+    done = []
+
+    async def writer():
+        # Polling and writing one word takes 320 cycles, and only 260 are available. So write pairs in one
+        # transaction, on a timer, as a timed host would.
+        nonlocal fed
+        began, pairs = cycles_now(), 0
+        while fed < len(feed) and not done:
+            pairs += 1
+            await wait_cycles(began + pairs * FRAME_CYCLES / 2 - cycles_now())
+            await fifo_write(dut, feed[fed:fed + 2])
+            fed += 2
+
+    await start(dut)
+    task = cocotb.start_soon(writer())
+    trace = await capture(dut, round(subframes_count * FRAME_CYCLES / 2), None)
+    done.append(True)
+    await task
+    host.HALF = saved
+    await stop(dut)
+    return payloads, trace
+
+
+@cocotb.test()
+async def test_spdif_transmit_known_preambles_and_block(dut):
+    """A whole block, read back by an edge-only decoder: preambles, data, parity, and the rate."""
+    await reset(dut)
+    count = 384 + 20
+    payloads, trace = await spdif_transmit(dut, count)
+    levels = [(t[0] >> 4) & 1 for t in trace]
+    assert not any((t[0] >> 5) & 1 for t in trace[:-200]), "the host fell behind"
+    states, edges, runs = spdif_read_line(levels)
+    khz = (len(states) / 128) / ((edges[-1] - edges[0]) / 50e6) / 1000
+    dut._log.info(f"frame rate {khz:.3f} kHz over {len(states) / 128:.1f} frames. Gaps seen, in cycles: {sorted(set(runs))}")
+    got = spdif_split(states)
+    assert got[0][0] == "B", f"first preamble is {got[0][0]}"
+    names = [g[0] for g in got]
+    wanted = ["B" if i % 384 == 0 else ("W" if i % 2 else "M") for i in range(len(names))]
+    assert names == wanted, f"preamble order breaks at {next(i for i, (a, b) in enumerate(zip(names, wanted)) if a != b)}"
+    n = min(len(got), len(payloads)) - 1
+    wrong = [i for i in range(n) if got[i][1] != payloads[i]]
+    assert not wrong, f"{len(wrong)} of {n} subframes wrong, first {wrong[0]}: {got[wrong[0]][1]} vs {payloads[wrong[0]]}"
+
+    assert abs(khz - 48) / 48 < 0.001, f"{khz:.3f} kHz is outside IEC's 0.1% tolerance"
