@@ -1143,3 +1143,212 @@ async def test_sd_dat_line_fault(dut):
     words = await sd_run(dut, card, [(1, cmd_bytes(24, 0), 2, data)], cycles=180_000)
     assert card.write_status == 0b101, f"card status {card.write_status}"
     assert 0xA505 in words, f"{[hex(w) for w in words]}"
+
+
+# ------------------------------------------------------------------ 100BASE-TX, the expected limit
+CODE_4B5B = {0: 0x1E, 1: 0x09, 2: 0x14, 3: 0x15, 4: 0x0A, 5: 0x0B, 6: 0x0E, 7: 0x0F,
+             8: 0x12, 9: 0x13, 10: 0x16, 11: 0x17, 12: 0x1A, 13: 0x1B, 14: 0x1C, 15: 0x1D}
+J, K, T, R, IDLE = 0x18, 0x11, 0x0D, 0x07, 0x1F
+
+
+def group_bits(group):
+    return [(group >> k) & 1 for k in range(4, -1, -1)]
+
+
+async def eth_tx_run(dut, nibbles, bit):
+    """Returns descrambled line bits, or None if the line can't be read as MLT-3."""
+    from test import capture
+    await stop(dut)
+    await load_program(dut, firmware("trial/eth_tx.s", BIT=bit).words)
+    await start(dut)
+    await wait_cycles(30 * bit)
+    words = [nibbles[i] << 12 | nibbles[i + 1] << 8 | nibbles[i + 2] << 4 for i in range(0, len(nibbles), 3)] + [1]
+    feed = list(words)
+    done = []
+
+    async def writer():
+        while feed and not done:
+            if not (await spi_xfer(dut, [0x12, 0]))[1] & 0x08:
+                await fifo_write(dut, [feed.pop(0)])
+
+    task = cocotb.start_soon(writer())
+    trace = await capture(dut, (len(nibbles) * 5 + 200) * bit, None)
+    done.append(True)
+    await task
+    await stop(dut)
+    return trace
+
+
+def mlt3_levels(trace):
+    return [((t[0] >> 4) & 1) - ((t[0] >> 5) & 1) for t in trace]
+
+
+def mlt3_decode(levels, bit):
+    """Symbols sampled at each bit time. A change of level is a 1. Also checks that levels step 0,+1,0,-1."""
+    edges = [i for i in range(1, len(levels)) if levels[i] != levels[i - 1]]
+    assert edges, "the line never changed"
+    start_at = edges[0] % bit
+    samples = [levels[i] for i in range(start_at + bit // 2, len(levels), bit)]
+    order = {(0, 1): 1, (1, 0): 1, (0, -1): 1, (-1, 0): 1}
+    bits = []
+    for a, b in zip(samples, samples[1:]):
+        if a != b:
+            assert (a, b) in order, f"MLT-3 jumped from {a} to {b}"
+        bits.append(int(a != b))
+    return bits
+
+
+def descramble(line):
+    """Idle is all ones, so the scrambler can be read from it, and then it follows s[n] = s[n-11] ^ s[n-9]."""
+    stream = [1 - b for b in line[:11]]
+    for i in range(11, len(line)):
+        stream.append(stream[i - 11] ^ stream[i - 9])
+    return [a ^ b for a, b in zip(line, stream)]
+
+
+def eth_groups_after_jk(bits):
+    text = "".join(map(str, bits))
+    at = text.find("1100010001")
+    assert at >= 0, "no J/K found"
+    body = bits[at + 10:]
+    return [sum(b << (4 - k) for k, b in enumerate(body[i:i + 5])) for i in range(0, len(body) - 4, 5)], bits[:at]
+
+
+@cocotb.test()
+async def test_eth_transmit_whole_chain_and_fastest_rate(dut):
+    """Everything below 125 MBd: 4B/5B, J/K, T/R, idle, the scrambler over a long run, MLT-3. Finds the top rate."""
+    await reset(dut)
+    nibbles = (list(range(16)) * 4)[:63]
+    fastest = None
+    for bit in (60, 40, 30, 26, 24, 22, 20, 18, 16, 14):
+        trace = await eth_tx_run(dut, nibbles, bit)
+        try:
+            bits = descramble(mlt3_decode(mlt3_levels(trace), bit))
+            groups, before = eth_groups_after_jk(bits)
+            wanted = [CODE_4B5B[n] for n in nibbles] + [T, R]
+            ok = groups[:len(wanted)] == wanted and all(before[20:]) and all(g == IDLE for g in groups[len(wanted):-1])
+        except AssertionError as err:
+            dut._log.info(f"100BASE-TX chain at {bit} cycles a symbol: {err}")
+            ok = False
+        dut._log.info(f"100BASE-TX chain at {bit} cycles a symbol ({50 / bit:.2f} MBd): {'good' if ok else 'wrong'}")
+        if ok:
+            fastest = bit
+        else:
+            break
+    assert fastest is not None, "the chain never worked, even slowly"
+    dut._log.info(f"100BASE-TX whole chain tops out at {50 / fastest:.2f} MBd, needs 125: {125 / (50 / fastest):.0f} times too slow")
+
+
+@cocotb.test()
+async def test_eth_absolute_pin_limit(dut):
+    """The fastest a pin can move at all, with no encoding: one bit per cycle from SR. Below 125 MBd regardless."""
+    from test import assemble, capture
+    await reset(dut)
+    prog = assemble("""
+        msb   1
+        set   4, 0
+        mode  4, eng
+        sri   0x55, 8
+loop:   bci   8
+b:      outb  4, b
+        sri   0x55, 8
+        jmp   loop
+""")
+    await load_program(dut, prog.words)
+    await start(dut)
+    await wait_cycles(20)
+    trace = await capture(dut, 400, None)
+    await stop(dut)
+    levels = [(t[0] >> 4) & 1 for t in trace]
+    changes = [i for i in range(1, len(levels)) if levels[i] != levels[i - 1]]
+    shortest = min(b - a for a, b in zip(changes, changes[1:]))
+    assert shortest == 1, "OUTB should move one bit per cycle"
+    dut._log.info(f"Fastest pin change: every {shortest} cycle, so at most 50 MBd against 125")
+
+
+@cocotb.test()
+async def test_eth_receive_at_125_mbd_cannot_work(dut):
+    """Plan test 6: feed a real 125 MBd stream to the fastest possible sampling, and count what survives."""
+    from test import assemble
+    await reset(dut)
+    prog = assemble("""
+        msb   1
+top:  bci   16
+b:    inb   0, b
+      push
+      jmp   top
+""".replace("      ", "        "))
+    await load_program(dut, prog.words)
+    rng_bits = [(i * i + (i >> 2)) & 1 for i in range(400)]
+
+    async def play():
+        for b in rng_bits:
+            dut.uio_in.value = 0xFE | b
+            await Timer(8, "ns")
+
+    await start(dut)
+    cocotb.start_soon(play())
+    await wait_cycles(10)
+    words = []
+    for _ in range(8):
+        await wait_cycles(16)
+    words = await fifo_all(dut, 4)
+    await stop(dut)
+    captured = len(words) * 16
+    per_symbol = 8 / CYCLE_NS
+    dut._log.info(f"At 50 MHz, one sample per {CYCLE_NS} ns against one symbol per 8 ns: {per_symbol:.2f} samples a symbol, "
+                  f"so at least {100 * (1 - per_symbol):.0f}% of symbols are never seen. Captured {captured} bits")
+    assert per_symbol < 1, "this test assumes sampling slower than the symbols"
+
+
+async def eth_rx_run(dut, groups, half):
+    from test import capture
+    await stop(dut)
+    await load_program(dut, firmware("trial/eth_rx.s").words)
+    await start(dut)
+    bits = [1] * 20 + [b for g in groups for b in group_bits(g)] + [1] * 20
+    words = []
+    wave = []
+    for b in bits:
+        wave += [(b, 0)] * half + [(b, 1)] * half
+    done = []
+
+    async def reader():
+        while not done:
+            if not (await spi_xfer(dut, [0x12, 0]))[1] & 0x10:
+                words.extend(await fifo_read(dut, 1))
+
+    task = cocotb.start_soon(reader())
+
+    def bus(t, out, oe):
+        data, clk = wave[t] if t < len(wave) else (1, 0)
+        return 0xFC | data | clk << 1
+
+    trace = await capture(dut, len(wave) + 400, bus)
+    done.append(True)
+    await task
+    words += await fifo_all(dut, 8)
+    await stop(dut)
+    return words, trace
+
+
+@cocotb.test()
+async def test_eth_receive_code_groups(dut):
+    """Decoding, delimiters and an invalid group. Finds the fastest clock that decodes correctly."""
+    await reset(dut)
+    nibbles = list(range(16))
+    good = [J, K] + [CODE_4B5B[n] for n in nibbles] + [T, R]
+    fastest = None
+    for half in (60, 40, 30, 26, 22, 20, 18, 16, 14, 12):
+        words, _ = await eth_rx_run(dut, good, half)
+        ok = words == nibbles + [0x0200]
+        dut._log.info(f"100BASE-X receive at {2 * half} cycles a bit ({25 / half:.2f} MBd): {'good' if ok else [hex(w) for w in words][:20]}")
+        if ok:
+            fastest = half
+        else:
+            break
+    assert fastest is not None
+    dut._log.info(f"100BASE-X receive tops out at {25 / fastest:.2f} MBd, needs 125")
+    words, trace = await eth_rx_run(dut, [J, K, CODE_4B5B[3], 0x00, CODE_4B5B[4]], 60)
+    assert words[:2] == [3, 0x0100], f"invalid group: {[hex(w) for w in words]}"
+    assert any((t[0] >> 7) & 1 for t in trace), "RX_ERROR never rose"
