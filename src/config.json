@@ -20,6 +20,14 @@
   "RUN_POST_GRT_RESIZER_TIMING": true,
   "RUN_POST_GRT_DESIGN_REPAIR": true,
 
+  "//": "Experiment: repair to a wider margin. Before detailed routing the estimates showed no slew or cap",
+  "//": "violations, but the routed design had 63 and 23: estimates miss up to 49% of slew at macro inputs",
+  "//": "and 82% of load at macro outputs. Defaults are 10% after global routing and 20% after placement.",
+  "GRT_DESIGN_REPAIR_MAX_SLEW_PCT": 40,
+  "GRT_DESIGN_REPAIR_MAX_CAP_PCT": 50,
+  "DESIGN_REPAIR_MAX_SLEW_PCT": 30,
+  "DESIGN_REPAIR_MAX_CAP_PCT": 30,
+
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
   "//": "The value is in nanoseconds, so 20ns == 50MHz.",
   "CLOCK_PERIOD": 20,
