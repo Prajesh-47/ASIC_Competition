@@ -588,6 +588,55 @@ async def test_register_timer_period_past_13_bits(dut):
     assert len(gaps) >= 1 and all(g == 2 * period for g in gaps), f"rising edges at {rises}"
 
 
+def _aux_edges(levels):
+    """Times of AUX0 rising, AUX0 falling and AUX1 falling, from uo_out samples."""
+    events, prev = {}, None
+    for t, uo in enumerate(levels):
+        if prev is not None:
+            for name, bit, rise in (("aux0_rise", 4, 1), ("aux0_fall", 4, 0), ("aux1_fall", 5, 0)):
+                if name not in events and ((uo >> bit) & 1) == rise and ((prev >> bit) & 1) != rise:
+                    events[name] = t
+        prev = uo
+    return events
+
+
+@cocotb.test()
+async def test_timer_loads_clear_pending_and_use_all_bits(dut):
+    """TSETR drops a tick already pending, and TPHASE from R1 takes a value over 14 bits.
+
+    Both survived as mutants: random programs rarely reach them. Timing is checked against the model.
+    """
+    await reset(dut)
+    source = ("set 9, 1\n tset 2\n dly 20\n"      # a tick is now pending
+              "ldi r1, 20833\n tset r1\n"            # must drop it
+              "set 9, 0\n set.t 8, 1\n"              # so this waits a full period
+              "ldi r1, 30000\n tphase r1\n"          # over 14 bits
+              "set.t 8, 0\n halt")
+    words = assemble(source).words
+    cycles = 55000
+
+    model = Splice()
+    model.load(words)
+    model.start()
+    want = _aux_edges([model.step(UI_IDLE, 0xFF)["uo"] for _ in range(cycles)])
+
+    await stop(dut)
+    await load_program(dut, words)
+    await write_reg(dut, 0, 0)
+    await start(dut)
+    levels = []
+    for _ in range(cycles):
+        await FallingEdge(dut.clk)
+        levels.append(int(dut.uo_out.value))
+    await stop(dut)
+    got = _aux_edges(levels)
+
+    assert len(want) == 3 and len(got) == 3, f"model {want}, RTL {got}"
+    assert abs(want["aux0_fall"] - want["aux0_rise"] - 30000) < 8, f"model itself is off: {want}"
+    rel = lambda e: (e["aux0_rise"] - e["aux1_fall"], e["aux0_fall"] - e["aux0_rise"])  # noqa: E731
+    assert rel(got) == rel(want), f"RTL {rel(got)}, model {rel(want)}"
+
+
 # ------------------------------------------------------------------ RTL against the golden model
 PARK_LINE = 11  # AUX_IN3: every random program waits for this line before doing anything else
 MASK_UO = 0xFE  # uo[0] is the host's MISO, which the model doesn't include
