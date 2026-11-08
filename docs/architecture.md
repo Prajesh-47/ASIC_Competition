@@ -128,7 +128,7 @@ Each context has its own `PC`, `R0`–`R3` (16-bit), `SR` (16-bit), `BC`, `TO`, 
 
 ### 5.3 Bit timer and tick
 The qualifier `.t` on an instruction means: wait for the next tick, then execute. A tick comes from one of two sources:
-- **The period timer,** set by `TSET` (13 bits, so up to 8,191 cycles, about 6.1 kbaud at 50 MHz; slower rates need delay loops). `TPHASE` restarts its phase from a preset (one, a half, or one and a half periods) or from `R1`.
+- **The period timer,** 16 bits, so up to 65,535 cycles (about 760 baud at 50 MHz). `TSET` sets it from a 13-bit constant, up to 8,191 cycles, and `TSETR` from any register operand, so a measured bit time can be applied once. `TPHASE` restarts its phase from a preset (one, a half, or one and a half periods) or from `R1`.
 - **An input edge,** set by `TSRC`: rising, falling or both. This is how firmware follows an external clock.
 
 ### 5.4 Instructions
@@ -137,10 +137,10 @@ The qualifier `.t` on an instruction means: wait for the next tick, then execute
 |---|---|---|
 | Pins | `SET`, `MODE`, `OUT`, `IN`, `PROBE`, `WAIT` | `MODE` is the **injection primitive**. `OUT` with no-shift (`ns`) lets `IN` do the shift, for full duplex on one register |
 | **Fused bit loops** | **`OUTB`, `INB`** | **One bit, shift, and loop back while bits remain.** This is where most of the code saving comes from |
-| Timing | `WAITT`, `TSET`, `TPHASE`, `TSRC`, `DLY`, `DLYR` | |
+| Timing | `WAITT`, `TSET`, `TSETR`, `TPHASE`, `TSRC`, `DLY`, `DLYR` | `TSETR` takes the period from a register. Added after the trial |
 | FIFO | `PULLW`, `PULL`, `PUSH` | `PULLW` stalls until data arrives and loads `BC`. `PULL` doesn't stall, and sets `F` when empty |
 | Setup | `BCI`, `SRI`, `MSB`, `SIDE` | `SIDE` picks the line for side-set: a second line changing on the same edge |
-| Data | `LDI`, `MOV`, `ADD`, `XOR`, `AND`, `CMP`, `CMPI`, `SHR`, `SHL`, `RAND` | Shifts put the bit shifted out in `F`. `RAND` is one LFSR step, for seeded and repeatable fuzzing |
+| Data | `LDI`, `MOV`, `ADD`, `ADDR`, `XOR`, `AND`, `CMP`, `CMPI`, `SHR`, `SHL`, `RAND` | `ADDR` adds a register operand, and sets `Z` but not `F`, like `ADD`. Shifts put the bit shifted out in `F`. `RAND` is one LFSR step, for seeded and repeatable fuzzing |
 | Control | `JMP`, `DJNZ`, `CALL`, `RET`, `TSTB`, `NOP`, `HALT` | `CALL` is one level. `TSTB` sets `Z` from the next output bit. `JMP` conditions: always, Z, NZ, F, !F, BC=0, BC≠0, and a spare |
 | Chip | `IRQ`, `TRIG`, `CAPON`, `CAPOFF`, `CAPMARK` | |
 
@@ -200,8 +200,10 @@ The qualifier `.t` on an instruction means: wait for the next tick, then execute
 | `1110010100` | `RAND` | r 2 |
 | `1110010101` | `SHL` | r 2 |
 | `1110010110` | `SHR` | r 2 |
+| `11100110` | `ADDR` | d 2, s 3 |
+| `11100111` | `TSETR` | s 3 |
 
-Field names: `line` 0–7 is a bus line and 8–11 is AUX; `side` is enable and value; `rel` branches back up to 15 words; `to` is an absolute address, 9 bits so the 512-word macro needs no ISA change, though the 256-word macro uses 8; `hl` selects `LDI`'s high or low byte; `sh` is `SRI`'s shift. The `stamp` bit in `WAIT` is held for the capture unit. About 10% of the encoding space is still free.
+Field names: `line` 0–7 is a bus line and 8–11 is AUX; `side` is enable and value; `rel` branches back up to 15 words; `to` is an absolute address, 9 bits so the 512-word macro needs no ISA change, though the 256-word macro uses 8; `hl` selects `LDI`'s high or low byte; `sh` is `SRI`'s shift. The `stamp` bit in `WAIT` is held for the capture unit. `ADDR` and `TSETR` were added after v1 in free codes, so no opcode moved. The assembler picks them when the operand is a register: `add r0, r1`, `tset r1`. About 9.5% of the encoding space is still free.
 
 **Reserved encodings:** `ARM` and `MATCH` for hardware match rules, `CODE`, `CODE2` and `CRCSR` for the line coder (section 5.6).
 

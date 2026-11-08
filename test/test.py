@@ -562,6 +562,32 @@ top:    wait  1, fall
     await write_reg(dut, 0, 0)
 
 
+@cocotb.test()
+async def test_register_timer_period_past_13_bits(dut):
+    """ADDR builds a period of 20,833 cycles (DALI's half bit) and TSETR loads it. TSET stops at 8,191.
+
+    Random programs run 800 cycles, so they never see a period this long tick.
+    """
+    await reset(dut)
+    period = 20833
+    prog = assemble(f"ldi r1, 10000\nldi r2, {period - 10000}\nadd r1, r2\ntset r1\n"
+                    "top: set.t 8, 1\n set.t 8, 0\n jmp top")
+    await stop(dut)
+    await load_program(dut, prog.words)
+    await write_reg(dut, 0, 0)
+    await start(dut)
+    rises, was = [], 0
+    for t in range(5 * period):
+        await FallingEdge(dut.clk)
+        now = (int(dut.uo_out.value) >> 4) & 1
+        if now and not was:
+            rises.append(t)
+        was = now
+    await stop(dut)
+    gaps = [b - a for a, b in zip(rises, rises[1:])]
+    assert len(gaps) >= 1 and all(g == 2 * period for g in gaps), f"rising edges at {rises}"
+
+
 # ------------------------------------------------------------------ RTL against the golden model
 PARK_LINE = 11  # AUX_IN3: every random program waits for this line before doing anything else
 MASK_UO = 0xFE  # uo[0] is the host's MISO, which the model doesn't include
@@ -583,7 +609,7 @@ def random_program(rng, length, ctx1):
             words.append(park)
             continue
         if rng.random() < 0.02:  # reserved encodings must behave as NOP
-            words.append(rng.choice([0xC400, 0xC800, 0xCC00, 0xA800, 0xB000, 0xE640, 0xF000, 0xFFFF]))
+            words.append(rng.choice([0xC400, 0xC800, 0xCC00, 0xA800, 0xB000, 0xE5C0, 0xE800, 0xF000, 0xFFFF]))
             continue
         op = rng.choice(choices)
         chance = rng.random()
@@ -597,13 +623,15 @@ def random_program(rng, length, ctx1):
             op = "PULL"  # an empty FIFO would stall PULLW for the rest of the run
         if op == "DLYR" and rng.random() < 0.7:
             op = "NOP"  # a huge register value would too
+        if op == "TSETR" and rng.random() < 0.7:
+            op = "TSET"  # a register period is usually huge, which starved the !F and BC=0 jump bins
         fields = {}
         for name, width in TABLE[op][1]:
             value = rng.getrandbits(width)
             if name == "to":
                 value = rng.randrange(1, length - 1)
-            elif name == "c" and op == "JMP" and rng.random() < 0.3:
-                value = COND["BCN"]
+            elif name == "c" and op == "JMP" and rng.random() < 0.4:
+                value = rng.choice([COND["BCN"], COND["BCN"], COND["BC0"]])
             elif name == "rel":
                 value = rng.randrange(0, min(pc, 16))
             elif name == "n" and op == "DLY":
@@ -613,6 +641,10 @@ def random_program(rng, length, ctx1):
             elif name == "dly":
                 value = rng.randrange(0, min(1 << width, 6))
             fields[name] = value
+        if op == "JMP" and fields["c"] == COND["BC0"] and pc + 1 != ctx1 and pc + 1 < length - 1 \
+                and rng.random() < 0.5:
+            # Few BC=0 jumps run at all, so set BC up for both outcomes rather than leave it to chance
+            words.append(encode("BCI", n=0 if rng.random() < 0.5 else rng.randrange(1, 32)))
         words.append(encode(op, **fields))
     words.append(encode("JMP", c=COND["AL"], to=1))
     return words

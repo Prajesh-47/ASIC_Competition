@@ -146,6 +146,9 @@ def _translate(mnemonic, args, flags, named, names, labels, pc, final):
         return [(op, {"r": reg(args[0]), "to": num(args[1])})]
     if op == "WAIT":
         return [(op, {"line": num(args[0]), "c": key(WAITC, args[1]), "stamp": 1 if "stamp" in flags else 0})]
+    # A register operand picks the register form: "add r0, r1" is ADDR, "tset r1" is TSETR
+    if op == "TSETR" or (op == "TSET" and args[0].upper() in OPERAND):
+        return [("TSETR", {"s": key(OPERAND, args[0])})]
     if op == "TSET":
         return [(op, {"p": num(args[0])})]
     if op == "TPHASE":
@@ -160,6 +163,8 @@ def _translate(mnemonic, args, flags, named, names, labels, pc, final):
         return [(op, {"r": reg(args[0])})]
     if op == "SRI":
         return [(op, {"v": num(args[0]), "sh": num(args[1]) if len(args) > 1 else 0})]
+    if op == "ADDR" or (op == "ADD" and args[1].upper() in OPERAND):
+        return [("ADDR", {"d": reg(args[0]), "s": key(OPERAND, args[1])})]
     if op in ("ADD", "CMPI"):
         field = "r" if op == "ADD" else "a"
         return [(op, {field: reg(args[0]), "v": num(args[1])})]

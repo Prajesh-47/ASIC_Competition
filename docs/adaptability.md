@@ -102,6 +102,17 @@ All were in firmware or tests. None needed an RTL change.
 - **Test models:** the MDIO turnaround came a clock late, the SD card ignored its own stuck line, and the hosts
   for S/PDIF and Ethernet were too slow. Each was found by tracing, and fixed before trusting the result.
 
+## Since the trial
+
+The tables above record the trial as it ran, and the trial firmware is kept unchanged. Fixes since then are
+measured against it.
+
+| Change | Gaps it closes | Measured |
+|---|---|---|
+| **`ADDR d, s`**: add a register operand. **`TSETR s`**: timer period from a register, with the timer widened from 13 to 16 bits (branch `exp/isa-addr-tsetr`) | Register-to-register ADD; TSET takes only a constant; the 8,191-cycle limit | **LIN** (`model/firmware/lin.s`): the checksum takes 8 instructions a byte instead of about 1,000 cycles, and each byte sets the bit time once instead of before every bit. On the golden model, with the node set up for each rate, it receives worst-case frames down to 56 cycles a bit (about 890 kbaud), against 1,666 (30 kbaud) for the trial version. 145 words, against 155. On RTL, both versions pass the trial's LIN tests, and the new one also passes at 480 kbaud. **Timer:** a 20,833-cycle period, DALI's half bit, ticks exactly on RTL. **Cost:** about 6% more engine logic in a generic synthesis (4,898 to 5,202 gates, 12 more flops). Chip area and timing still to measure |
+
+Not redone yet: DALI still counts 3 ticks per half bit, and could now use one.
+
 ## Next
 
 These gaps point to ISA and host-link changes. The plan:

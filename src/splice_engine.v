@@ -59,8 +59,8 @@ module splice_engine (
   reg        msb     [0:1];
   reg [3:0]  side_ln [0:1];
   reg [15:0] lfsr    [0:1];
-  reg [12:0] tp      [0:1];
-  reg [13:0] tcnt    [0:1];
+  reg [15:0] tp      [0:1];   // 16 bits from TSETR; TSET's constant fills the low 13
+  reg [16:0] tcnt    [0:1];   // one more, so TPHASE can start one and a half periods
   reg        pending [0:1];
   reg [3:0]  ts_line [0:1];
   reg [1:0]  ts_want [0:1];
@@ -89,7 +89,7 @@ module splice_engine (
       wire edge_seen = lines[ts_line[g]] != plines[ts_line[g]];
       assign tick_now[g] = (ts_want[g] != 2'd3)
           ? edge_seen && (ts_want[g] == 2'd2 || lines[ts_line[g]] == ts_want[g][0])
-          : (tp[g] != 0 && tcnt[g] <= 14'd1);
+          : (tp[g] != 0 && tcnt[g] <= 17'd1);
     end
   endgenerate
 
@@ -137,6 +137,8 @@ module splice_engine (
   wire is_tstb   = ins[15:8] == 8'b11100010;
   wire is_waitt  = ins[15:8] == 8'b11100011;
   wire is_xor    = ins[15:8] == 8'b11100100;
+  wire is_addr   = ins[15:8] == 8'b11100110;
+  wire is_tsetr  = ins[15:8] == 8'b11100111;
   wire is_rand   = ins[15:6] == 10'b1110010100;
   wire is_shl    = ins[15:6] == 10'b1110010101;
   wire is_shr    = ins[15:6] == 10'b1110010110;
@@ -184,9 +186,9 @@ module splice_engine (
     endcase
   endfunction
 
-  wire [15:0] opnd_alu = operand(ins[5:3], r0_c, r1_c, r2_c, r3_c, sr_c, bc_c, to_c);  // AND, XOR
+  wire [15:0] opnd_alu = operand(ins[5:3], r0_c, r1_c, r2_c, r3_c, sr_c, bc_c, to_c);  // AND, XOR, ADDR
   wire [15:0] opnd_mov = operand(ins[4:2], r0_c, r1_c, r2_c, r3_c, sr_c, bc_c, to_c);  // MOV, CMP b
-  wire [15:0] opnd_cmp = operand(ins[7:5], r0_c, r1_c, r2_c, r3_c, sr_c, bc_c, to_c);  // CMP a
+  wire [15:0] opnd_cmp = operand(ins[7:5], r0_c, r1_c, r2_c, r3_c, sr_c, bc_c, to_c);  // CMP a, TSETR
 
   wire        sbit = msb[c] ? sr[c][15] : sr[c][0];
   wire [15:0] sr_shifted_out = msb[c] ? {sr[c][14:0], 1'b0} : {1'b0, sr[c][15:1]};
@@ -291,9 +293,10 @@ module splice_engine (
   wire [15:0] alu_add = {add_lo[8] ? add_hi_inc : add_reg[15:8], add_lo[7:0]};
   wire [15:0] alu_xor = rr[{c, rn_alu}] ^ opnd_alu;
   wire [15:0] alu_and = rr[{c, rn_alu}] & opnd_alu;
+  wire [15:0] alu_addr = rr[{c, rn_alu}] + opnd_alu;
   wire [15:0] lfsr_nx = {1'b0, lfsr[c][15:1]} ^ (lfsr[c][0] ? 16'hB400 : 16'h0000);
   wire [15:0] mov_val = opnd_mov;
-  wire [13:0] phase_half = {2'd0, tp[c][12:1]};
+  wire [16:0] phase_half = {2'd0, tp[c][15:1]};
 
   // Write ports. Each state element takes one data word selected by AND-OR, rather than one path per
   // instruction, which would give every bit of the register file its own mux tree.
@@ -303,11 +306,12 @@ module splice_engine (
   wire        is_shift = is_shr || is_shl;
   wire        mov_rr = is_mov && !ins[7];
 
-  wire rr_we = ex && (is_ldi || is_add || is_xor || is_and || is_shift || is_rand || is_djnz || mov_rr);
-  wire [1:0] rr_idx = ({2{is_ldi}} & rn_ldi) | ({2{is_add}} & rn_add) | ({2{is_xor || is_and}} & rn_alu)
+  wire rr_we = ex && (is_ldi || is_add || is_addr || is_xor || is_and || is_shift || is_rand || is_djnz || mov_rr);
+  wire [1:0] rr_idx = ({2{is_ldi}} & rn_ldi) | ({2{is_add}} & rn_add) | ({2{is_xor || is_and || is_addr}} & rn_alu)
                     | ({2{is_shift || is_rand}} & rn_sft) | ({2{is_djnz}} & rn_djnz) | ({2{mov_rr}} & ins[6:5]);
   wire [15:0] rr_wd = ({16{is_ldi}} & (ins[9] ? {ins[8:1], ldi_reg[7:0]} : {8'd0, ins[8:1]}))
                     | ({16{is_add}} & alu_add)
+                    | ({16{is_addr}} & alu_addr)
                     | ({16{is_xor}} & alu_xor)
                     | ({16{is_and}} & alu_and)
                     | ({16{is_shr}} & {1'b0, sft_reg[15:1]})
@@ -316,8 +320,8 @@ module splice_engine (
                     | ({16{is_djnz}} & djnz_dec)
                     | ({16{mov_rr}} & mov_val);
 
-  wire z_we = is_add || is_xor || is_and || is_cmp || is_cmpi || is_tstb || is_probe;
-  wire z_wd = (is_add && alu_add == 0) || (is_xor && alu_xor == 0) || (is_and && alu_and == 0)
+  wire z_we = is_add || is_addr || is_xor || is_and || is_cmp || is_cmpi || is_tstb || is_probe;
+  wire z_wd = (is_add && alu_add == 0) || (is_addr && alu_addr == 0) || (is_xor && alu_xor == 0) || (is_and && alu_and == 0)
            || (is_cmp && opnd_cmp == opnd_mov) || (is_cmpi && add_reg == {8'd0, ins[7:0]})
            || (is_tstb && sbit) || (is_probe && lines[ln_p]);
 
@@ -380,7 +384,7 @@ module splice_engine (
       // Timers run on every clock, for both contexts.
       for (i = 0; i < 2; i = i + 1) begin
         if (ts_want[i] == 2'd3 && tp[i] != 0)
-          tcnt[i] <= tcnt[i] <= 14'd1 ? {1'b0, tp[i]} : tcnt[i] - 14'd1;
+          tcnt[i] <= tcnt[i] <= 17'd1 ? {1'b0, tp[i]} : tcnt[i] - 17'd1;
         if (tick_now[i]) pending[i] <= 1'b1;
       end
 
@@ -423,16 +427,21 @@ module splice_engine (
               if (bc_we) bc[c] <= bc_wd;
               if (is_waitt) pending[c] <= 1'b0;
               if (is_tset) begin
-                tp[c] <= ins[12:0];
-                tcnt[c] <= {1'b0, ins[12:0]};
+                tp[c] <= {3'd0, ins[12:0]};
+                tcnt[c] <= {4'd0, ins[12:0]};
+                pending[c] <= 1'b0;
+              end
+              if (is_tsetr) begin
+                tp[c] <= opnd_cmp;
+                tcnt[c] <= {1'b0, opnd_cmp};
                 pending[c] <= 1'b0;
               end
               if (is_tphase) begin
                 case (ins[7:6])
-                  2'd0: tcnt[c] <= {1'b0, tp[c]} - 14'd1;
-                  2'd1: tcnt[c] <= phase_half - 14'd1;
-                  2'd2: tcnt[c] <= {1'b0, tp[c]} + phase_half - 14'd1;
-                  default: tcnt[c] <= rr[{c, 2'd1}][13:0];
+                  2'd0: tcnt[c] <= {1'b0, tp[c]} - 17'd1;
+                  2'd1: tcnt[c] <= phase_half - 17'd1;
+                  2'd2: tcnt[c] <= {1'b0, tp[c]} + phase_half - 17'd1;
+                  default: tcnt[c] <= {1'b0, rr[{c, 2'd1}]};
                 endcase
                 pending[c] <= 1'b0;
               end

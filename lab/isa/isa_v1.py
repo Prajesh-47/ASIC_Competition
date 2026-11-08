@@ -23,6 +23,12 @@ RESERVED = {
 }
 ALL = {**TABLE, **RESERVED}
 
+# Added after v1, pinned in free codes. Assigning them canonically would renumber every 8-bit opcode.
+EXTENSIONS = {
+    "ADDR": ("11100110", {"d": 2, "s": 3}),   # Rd += operand: the trial's LIN checksum
+    "TSETR": ("11100111", {"s": 3}),          # 16-bit timer period from a register: LIN auto-baud, DALI
+}
+
 # Listed in the order the map should read: frequent, wide formats first.
 ORDER = ["TSET", "JMP", "CALL", "DLY", "LDI", "SRI", "SET", "MODE", "OUT", "IN", "OUTB", "INB", "DJNZ",
          "(reserved) ARM", "(reserved) MATCH", "WAIT", "ADD", "CMPI", "(reserved) CODE", "(reserved) CODE2"]
@@ -41,6 +47,17 @@ def assign():
     return out
 
 
+def with_extensions(codes):
+    out = dict(codes)
+    for name, (code, _) in EXTENSIONS.items():
+        out[name] = code
+    return out
+
+
+def fields_of(name):
+    return EXTENSIONS[name][1] if name in EXTENSIONS else ALL[name][1]
+
+
 def check(codes):
     vals = list(codes.values())
     for a in vals:
@@ -49,7 +66,21 @@ def check(codes):
     for name, (bits, fields) in ALL.items():
         assert len(codes[name]) == bits
         assert bits + sum(fields.values()) <= 16, name
+    for name, (code, fields) in EXTENSIONS.items():
+        assert len(code) + sum(fields.values()) <= 16, name
     assert sum(2.0 ** -len(c) for c in vals) <= 1
+
+
+def matches_model(codes):
+    """The model's table, which the assembler and RTL tests use, must match this map exactly."""
+    import os
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "model"))
+    from splice.isa import TABLE as MODEL
+    for name, (code, layout) in MODEL.items():
+        assert codes.get(name) == code, (name, code, codes.get(name))
+        assert dict(layout) == fields_of(name), name
+    assert set(MODEL) == {n for n in codes if not n.startswith("(reserved)")}, set(MODEL) ^ set(codes)
 
 
 def firmware_fits():
@@ -71,16 +102,18 @@ def firmware_fits():
 
 
 def main():
-    codes = assign()
+    codes = with_extensions(assign())
     check(codes)
+    matches_model(codes)
     n, unused = firmware_fits()
-    print(f"prefix code OK: {len(ALL)} entries, Kraft sum {sum(2.0 ** -len(c) for c in codes.values()):.3f}")
+    print(f"prefix code OK: {len(codes)} entries, Kraft sum {sum(2.0 ** -len(c) for c in codes.values()):.3f}")
+    print("model table matches")
     print(f"{n} study programs fit. Not exercised by any program: {unused}")
     print()
     print("| Opcode | Instruction | Fields (bits) |")
     print("|---|---|---|")
-    for name in sorted(ALL, key=lambda k: codes[k]):
-        fields = ", ".join(f"{k} {v}" for k, v in ALL[name][1].items()) or "None"
+    for name in sorted(codes, key=lambda k: codes[k]):
+        fields = ", ".join(f"{k} {v}" for k, v in fields_of(name).items()) or "None"
         print(f"| `{codes[name]}` | `{name}` | {fields} |")
 
 

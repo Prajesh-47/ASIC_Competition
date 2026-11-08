@@ -1484,9 +1484,13 @@ def uart_decode(bus, began, count, bit):
     return out
 
 
-async def lin_start(dut):
+# The trial firmware, and the version using ADDR and TSETR, added after the trial. Both must pass.
+LIN_PROGRAMS = ("trial/lin.s", "lin.s")
+
+
+async def lin_start(dut, program="trial/lin.s", **defines):
     await stop(dut)
-    await load_program(dut, firmware("trial/lin.s").words)
+    await load_program(dut, firmware(program, **defines).words)
     await write_reg(dut, 1, 0x10)
     await start(dut)
     bus = Bus(dut, 4)
@@ -1498,52 +1502,74 @@ async def lin_start(dut):
 async def test_lin_receive_with_auto_baud_and_checksum(dut):
     """Frames at nominal and off by 10% each way, measured from the sync byte. Then a bad checksum and bad parity."""
     await reset(dut)
-    for scale, data in ((1.0, [0x12, 0xFE]), (0.9, [0xFF, 0xFF]), (1.1, [0x00, 0x80])):
-        bit = round(LIN_BIT * scale)
-        bus = await lin_start(dut)
+    for program in LIN_PROGRAMS:
+        for scale, data in ((1.0, [0x12, 0xFE]), (0.9, [0xFF, 0xFF]), (1.1, [0x00, 0x80])):
+            bit = round(LIN_BIT * scale)
+            bus = await lin_start(dut, program)
+            pid = lin_pid(0x10)
+            await lin_header(bus, pid, bit)
+            for b in data + [lin_checksum([pid] + data)]:
+                await uart_send(bus, b, bit)
+            await wait_cycles(200)
+            got = await fifo_all(dut)
+            assert got == [pid, 0x100 | data[0], 0x100 | data[1], 0xA000], f"{program} at {scale}: {[hex(w) for w in got]}"
+            bus.close()
+        bus = await lin_start(dut, program)
         pid = lin_pid(0x10)
-        await lin_header(bus, pid, bit)
-        for b in data + [lin_checksum([pid] + data)]:
-            await uart_send(bus, b, bit)
+        await lin_header(bus, pid, LIN_BIT)
+        for b in [1, 2, lin_checksum([pid, 1, 2]) ^ 4]:
+            await uart_send(bus, b, LIN_BIT)
         await wait_cycles(200)
-        got = await fifo_all(dut)
-        assert got == [pid, 0x100 | data[0], 0x100 | data[1], 0xA000], f"at {scale}: {[hex(w) for w in got]}"
+        assert (await fifo_all(dut))[-1] == 0xC500, f"{program}: a bad checksum wasn't noticed"
         bus.close()
-    bus = await lin_start(dut)
-    pid = lin_pid(0x10)
-    await lin_header(bus, pid, LIN_BIT)
-    for b in [1, 2, lin_checksum([pid, 1, 2]) ^ 4]:
-        await uart_send(bus, b, LIN_BIT)
-    await wait_cycles(200)
-    assert (await fifo_all(dut))[-1] == 0xC500, "a bad checksum wasn't noticed"
-    bus.close()
-    bus = await lin_start(dut)
-    await lin_header(bus, lin_pid(0x10) ^ 0x40, LIN_BIT)
-    await wait_cycles(200)
-    assert (await fifo_all(dut)) == [0xBAD0], "bad parity wasn't noticed"
-    bus.close()
+        bus = await lin_start(dut, program)
+        await lin_header(bus, lin_pid(0x10) ^ 0x40, LIN_BIT)
+        await wait_cycles(200)
+        assert (await fifo_all(dut)) == [0xBAD0], f"{program}: bad parity wasn't noticed"
+        bus.close()
 
 
 @cocotb.test()
 async def test_lin_responds_and_ignores_a_short_break(dut):
     await reset(dut)
-    bus = await lin_start(dut)
-    await fifo_write(dut, [0xA5, 0x3C])
-    pid = 0x3C
-    await lin_header(bus, pid, LIN_BIT)
-    began = cycles_now()
-    await wait_cycles(45 * LIN_BIT)
-    assert uart_decode(bus, began, 3, LIN_BIT) == [0xA5, 0x3C, lin_checksum([pid, 0xA5, 0x3C])], f"{uart_decode(bus, began, 3, LIN_BIT)}"
-    assert (await fifo_all(dut)) == [pid, 0xA000]
-    bus.close()
-    bus = await lin_start(dut)
-    bus.drive(0)
-    await wait_cycles(5 * LIN_BIT)
-    bus.drive(1)
-    await wait_cycles(40 * LIN_BIT)
-    assert (await fifo_all(dut)) == [], "treated a short low pulse as a break"
-    bus.close()
+    for program in LIN_PROGRAMS:
+        bus = await lin_start(dut, program)
+        await fifo_write(dut, [0xA5, 0x3C])
+        pid = 0x3C
+        await lin_header(bus, pid, LIN_BIT)
+        began = cycles_now()
+        await wait_cycles(45 * LIN_BIT)
+        got = uart_decode(bus, began, 3, LIN_BIT)
+        assert got == [0xA5, 0x3C, lin_checksum([pid, 0xA5, 0x3C])], f"{program}: {got}"
+        assert (await fifo_all(dut)) == [pid, 0xA000], program
+        bus.close()
+        bus = await lin_start(dut, program)
+        bus.drive(0)
+        await wait_cycles(5 * LIN_BIT)
+        bus.drive(1)
+        await wait_cycles(40 * LIN_BIT)
+        assert (await fifo_all(dut)) == [], f"{program}: treated a short low pulse as a break"
+        bus.close()
 
+
+
+@cocotb.test()
+async def test_lin_new_firmware_far_above_lin_rates(dut):
+    """With ADDR and TSETR, a node set up for 104 cycles a bit (480 kbaud) still receives a worst-case frame.
+
+    The trial version stops near 30 kbaud on 0xFF bytes, where counting up the checksum runs out of time.
+    """
+    await reset(dut)
+    bit, data = 104, [0xFF, 0xFF]
+    bus = await lin_start(dut, "lin.s", NOMINAL=bit)
+    pid = lin_pid(0x10)
+    await lin_header(bus, pid, bit)
+    for b in data + [lin_checksum([pid] + data)]:
+        await uart_send(bus, b, bit)
+    await wait_cycles(200)
+    got = await fifo_all(dut)
+    assert got == [pid, 0x1FF, 0x1FF, 0xA000], [hex(w) for w in got]
+    bus.close()
 
 # ---- SENT
 def sent_crc(nibbles):

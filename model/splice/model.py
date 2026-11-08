@@ -311,8 +311,11 @@ class Splice:
         elif op == "TSET":
             c.tp = c.tcnt = f["p"]
             c.pending = False
-        elif op == "TPHASE":
-            c.tcnt = {0: c.tp - 1, 1: (c.tp >> 1) - 1, 2: c.tp + (c.tp >> 1) - 1, 3: c.R[1]}[f["mode"]] & 0x3FFF
+        elif op == "TSETR":  # the full 16 bits, where TSET's constant has 13
+            c.tp = c.tcnt = self.read(c, f["s"])
+            c.pending = False
+        elif op == "TPHASE":  # the counter has 17 bits, so one and a half periods fit
+            c.tcnt = {0: c.tp - 1, 1: (c.tp >> 1) - 1, 2: c.tp + (c.tp >> 1) - 1, 3: c.R[1]}[f["mode"]] & 0x1FFFF
             c.pending = False
         elif op == "TSRC":
             c.tsrc_line, c.tsrc_want = f["line"], f["want"]
@@ -360,6 +363,9 @@ class Splice:
         elif op == "ADD":
             c.R[f["r"]] = (c.R[f["r"]] + f["v"]) & MASK
             c.Z = int(c.R[f["r"]] == 0)
+        elif op == "ADDR":
+            c.R[f["d"]] = (c.R[f["d"]] + self.read(c, f["s"])) & MASK
+            c.Z = int(c.R[f["d"]] == 0)
         elif op == "XOR":
             c.R[f["d"]] ^= self.read(c, f["s"])
             c.Z = int(c.R[f["d"]] == 0)
