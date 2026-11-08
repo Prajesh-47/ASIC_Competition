@@ -118,9 +118,14 @@ async def dali_start(dut, program, **defines):
     return Bus(dut, 4)
 
 
-async def controller_exchange(dut, frame, reply_bits=None, te=TE, gap=7):
+# The trial firmware, and versions using the 16-bit timer, added after the trial. Both must pass.
+DALI_CONTROLLERS = ("trial/dali_controller.s", "dali_controller.s")
+DALI_GEARS = ("trial/dali_gear.s", "dali_gear.s")
+
+
+async def controller_exchange(dut, frame, reply_bits=None, te=TE, gap=7, program="trial/dali_controller.s"):
     """One forward frame. Replies `gap` Te after the frame ends. Returns the bus and when the frame began."""
-    bus = await dali_start(dut, "trial/dali_controller.s")
+    bus = await dali_start(dut, program)
     began = cycles_now()
     await fifo_write(dut, [frame])
     while not bus.falls_after(began):
@@ -136,108 +141,116 @@ async def controller_exchange(dut, frame, reply_bits=None, te=TE, gap=7):
 async def test_dali_forward_frame_and_yes(dut):
     """Exact waveform, 38 Te long, MSB first, then a YES that arrives after the shortest allowed gap."""
     await reset(dut)
-    frame = 0xA591
-    bus, first = await controller_exchange(dut, frame, byte_bits(0xFF))
-    wanted = dali_phases(byte_bits(frame, 16))
-    assert dali_read_forward(bus, first, len(wanted)) == wanted, "forward frame waveform is wrong"
-    end_of_data = first + len(wanted) * TE
-    changes = [t for t, _ in bus.history if first <= t <= first + 38 * TE]
-    assert changes[-1] <= end_of_data + 8, "bus should idle through the two stop bits"
-    assert abs(wanted.count(0) + wanted.count(1) - 34) == 0
-    await wait_cycles(30 * TE)
-    assert await fifo_all(dut) == [0x01FF]
-    bus.close()
+    for program in DALI_CONTROLLERS:
+        frame = 0xA591
+        bus, first = await controller_exchange(dut, frame, byte_bits(0xFF), program=program)
+        wanted = dali_phases(byte_bits(frame, 16))
+        assert dali_read_forward(bus, first, len(wanted)) == wanted, f"{program}: forward frame waveform is wrong"
+        end_of_data = first + len(wanted) * TE
+        changes = [t for t, _ in bus.history if first <= t <= first + 38 * TE]
+        assert changes[-1] <= end_of_data + 8, f"{program}: bus should idle through the two stop bits"
+        assert abs(wanted.count(0) + wanted.count(1) - 34) == 0
+        if program == "dali_controller.s":  # one tick per half bit: every edge exactly on a whole Te
+            assert all((t - first) % TE == 0 for t in changes), f"edges off the Te grid: {[(t - first) % TE for t in changes]}"
+        await wait_cycles(30 * TE)
+        assert await fifo_all(dut) == [0x01FF], program
+        bus.close()
 
 
 @cocotb.test()
 async def test_dali_no_reply_means_no(dut):
     await reset(dut)
-    bus, _ = await controller_exchange(dut, 0xFF91, None)
-    await wait_cycles(28 * TE)
-    assert await fifo_all(dut) == [0x0200]
-    bus.close()
+    for program in DALI_CONTROLLERS:
+        bus, _ = await controller_exchange(dut, 0xFF91, None, program=program)
+        await wait_cycles(28 * TE)
+        assert await fifo_all(dut) == [0x0200], program
+        bus.close()
 
 
 @cocotb.test()
 async def test_dali_backward_at_rate_limits(dut):
     """The note allows 1200 bit/s +-10%, at the latest allowed gap too."""
     await reset(dut)
-    for te, gap, value in ((round(TE * 0.9), 7, 0xA5), (round(TE * 1.1), 7, 0x5A), (TE, 20, 0x00)):
-        bus, _ = await controller_exchange(dut, 0x0102, byte_bits(value), te=te, gap=gap)
-        await wait_cycles(30 * TE)
-        got = await fifo_all(dut)
-        assert got == [0x0100 | value], f"te {te} gap {gap}: {[hex(w) for w in got]}"
-        bus.close()
+    for program in DALI_CONTROLLERS:
+        for te, gap, value in ((round(TE * 0.9), 7, 0xA5), (round(TE * 1.1), 7, 0x5A), (TE, 20, 0x00)):
+            bus, _ = await controller_exchange(dut, 0x0102, byte_bits(value), te=te, gap=gap, program=program)
+            await wait_cycles(30 * TE)
+            got = await fifo_all(dut)
+            assert got == [0x0100 | value], f"{program} te {te} gap {gap}: {[hex(w) for w in got]}"
+            bus.close()
 
 
 @cocotb.test()
 async def test_dali_malformed_backward_rejected(dut):
     await reset(dut)
-    for bits in (byte_bits(0x55)[:7], byte_bits(0x55) + [1]):
-        bus, _ = await controller_exchange(dut, 0x0102, bits)
-        await wait_cycles(30 * TE)
-        got = await fifo_all(dut)
-        assert got == [0x0300], f"{len(bits)} bits: {[hex(w) for w in got]}"
-        bus.close()
+    for program in DALI_CONTROLLERS:
+        for bits in (byte_bits(0x55)[:7], byte_bits(0x55) + [1]):
+            bus, _ = await controller_exchange(dut, 0x0102, bits, program=program)
+            await wait_cycles(30 * TE)
+            got = await fifo_all(dut)
+            assert got == [0x0300], f"{program} {len(bits)} bits: {[hex(w) for w in got]}"
+            bus.close()
 
 
 @cocotb.test()
 async def test_dali_collision_detected_and_retried(dut):
     """Another controller pulls the bus low while we've released it. We must stop, wait, and resend intact."""
     await reset(dut)
-    bus = await dali_start(dut, "trial/dali_controller.s")
-    began = cycles_now()
-    frame = 0x0F0F
-    await fifo_write(dut, [frame])
-    while not bus.falls_after(began):
-        await wait_cycles(1000)
-    first = bus.falls_after(began)[0]
-    # Bit 0 of the frame is a 0, whose first half is high. Pull it low there, as a 1 from a competitor would.
-    await wait_cycles(first + 2 * TE + TE // 8 - cycles_now())
-    bus.drive(0)
-    await wait_cycles(TE)
-    bus.drive(1)
-    await wait_cycles(5 * TE)
-    assert bus.own() == 1, "should have released the bus after a collision"
-    await wait_cycles(24 * TE)
-    retry = [t for t in bus.falls_after(first + 6 * TE)]
-    assert retry, "never retried"
-    gap = retry[0] - (first + 3 * TE)
-    assert gap >= 22 * TE - 8, f"retried after only {gap / TE:.1f} Te"
-    wanted = dali_phases(byte_bits(frame, 16))
-    await wait_cycles(retry[0] + 66 * TE - cycles_now())  # frame, then the longest reply wait
-    assert dali_read_forward(bus, retry[0], len(wanted)) == wanted, "retried frame is wrong"
-    assert await fifo_all(dut) == [0x0400, 0x0200]
-    bus.close()
+    for program in DALI_CONTROLLERS:
+        bus = await dali_start(dut, program)
+        began = cycles_now()
+        frame = 0x0F0F
+        await fifo_write(dut, [frame])
+        while not bus.falls_after(began):
+            await wait_cycles(1000)
+        first = bus.falls_after(began)[0]
+        # Bit 0 of the frame is a 0, whose first half is high. Pull it low there, as a 1 from a competitor would.
+        await wait_cycles(first + 2 * TE + TE // 8 - cycles_now())
+        bus.drive(0)
+        await wait_cycles(TE)
+        bus.drive(1)
+        await wait_cycles(5 * TE)
+        assert bus.own() == 1, "should have released the bus after a collision"
+        await wait_cycles(24 * TE)
+        retry = [t for t in bus.falls_after(first + 6 * TE)]
+        assert retry, f"{program}: never retried"
+        gap = retry[0] - (first + 3 * TE)
+        assert gap >= 22 * TE - 8, f"{program}: retried after only {gap / TE:.1f} Te"
+        wanted = dali_phases(byte_bits(frame, 16))
+        await wait_cycles(retry[0] + 66 * TE - cycles_now())  # frame, then the longest reply wait
+        assert dali_read_forward(bus, retry[0], len(wanted)) == wanted, f"{program}: retried frame is wrong"
+        assert await fifo_all(dut) == [0x0400, 0x0200], program
+        bus.close()
 
 
 @cocotb.test()
 async def test_dali_gear_addressing_and_reply(dut):
     """Short address, group, broadcast and someone else's address, at the rate limits too."""
     await reset(dut)
-    for byte, addressed, te in ((5 << 1 | 1, True, TE), (0x80 | 3 << 1 | 1, True, round(TE * 1.1)), (0xFF, True, round(TE * 0.9)),
-                                (6 << 1 | 1, False, TE), (0x80 | 4 << 1 | 1, False, TE)):
-        bus = await dali_start(dut, "trial/dali_gear.s")
-        await wait_cycles(1000)
-        frame = byte << 8 | 0x91
-        began = cycles_now()
-        await dali_send(bus, byte_bits(frame, 16), te)
-        await wait_cycles(4 * te)
-        ended = cycles_now()
-        await wait_cycles(40 * TE)
-        got = await fifo_all(dut)
-        falls = bus.falls_after(ended)
-        assert got[:1] == [frame], f"{frame:#06x}: {[hex(w) for w in got]}"
-        assert (0x0100 in got) == addressed
-        if addressed:
-            assert falls, f"{frame:#06x} got no reply"
-            gap = (falls[0] - ended) / TE
-            assert 7 <= gap <= 22, f"reply after {gap:.1f} Te"
-            assert dali_read_forward(bus, falls[0], 18) == dali_phases(byte_bits(0xFF)), "reply is wrong"
-        else:
-            assert not falls, f"{frame:#06x} shouldn't get a reply"
-        assert began < ended
-        bus.close()
+    for program in DALI_GEARS:
+        for byte, addressed, te in ((5 << 1 | 1, True, TE), (0x80 | 3 << 1 | 1, True, round(TE * 1.1)), (0xFF, True, round(TE * 0.9)),
+                                    (6 << 1 | 1, False, TE), (0x80 | 4 << 1 | 1, False, TE)):
+            bus = await dali_start(dut, program)
+            await wait_cycles(1000)
+            frame = byte << 8 | 0x91
+            began = cycles_now()
+            await dali_send(bus, byte_bits(frame, 16), te)
+            await wait_cycles(4 * te)
+            ended = cycles_now()
+            await wait_cycles(40 * TE)
+            got = await fifo_all(dut)
+            falls = bus.falls_after(ended)
+            assert got[:1] == [frame], f"{program} {frame:#06x}: {[hex(w) for w in got]}"
+            assert (0x0100 in got) == addressed
+            if addressed:
+                assert falls, f"{program} {frame:#06x} got no reply"
+                gap = (falls[0] - ended) / TE
+                assert 7 <= gap <= 22, f"{program}: reply after {gap:.1f} Te"
+                assert dali_read_forward(bus, falls[0], 18) == dali_phases(byte_bits(0xFF)), f"{program}: reply is wrong"
+            else:
+                assert not falls, f"{frame:#06x} shouldn't get a reply"
+            assert began < ended
+            bus.close()
 
 
 # ------------------------------------------------------------------ HDLC (RFC 1662, bit-synchronous)
