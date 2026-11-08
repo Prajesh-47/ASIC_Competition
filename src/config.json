@@ -27,6 +27,9 @@
   "GRT_DESIGN_REPAIR_MAX_CAP_PCT": 50,
   "DESIGN_REPAIR_MAX_SLEW_PCT": 30,
   "DESIGN_REPAIR_MAX_CAP_PCT": 30,
+  "//": "Experiment: also buffer any wire over 200 um, since the long routes to the macros are worst",
+  "GRT_DESIGN_REPAIR_MAX_WIRE_LENGTH": 200,
+  "DESIGN_REPAIR_MAX_WIRE_LENGTH": 200,
 
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
   "//": "The value is in nanoseconds, so 20ns == 50MHz.",
