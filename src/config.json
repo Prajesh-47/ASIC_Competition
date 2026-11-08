@@ -24,6 +24,16 @@
   "//": "path had about 7 ns to spare while the slow corner, which signoff checks, had 0.52.",
   "TIMING_VIOLATION_CORNERS": ["*typ*", "*slow*"],
 
+  "//": "Repair slew and capacitance to wider margins, and buffer any wire over 200 um (exp/slew-margin-wire,",
+  "//": "gds run 42508009377): slew violations 0 from 63, cap 0 from 23, setup slack 3.66 ns from 2.41, at",
+  "//": "7.6% more standard-cell area. The estimates before routing missed the long routes to the macros.",
+  "GRT_DESIGN_REPAIR_MAX_SLEW_PCT": 40,
+  "GRT_DESIGN_REPAIR_MAX_CAP_PCT": 50,
+  "DESIGN_REPAIR_MAX_SLEW_PCT": 30,
+  "DESIGN_REPAIR_MAX_CAP_PCT": 30,
+  "GRT_DESIGN_REPAIR_MAX_WIRE_LENGTH": 200,
+  "DESIGN_REPAIR_MAX_WIRE_LENGTH": 200,
+
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
   "//": "The value is in nanoseconds, so 20ns == 50MHz.",
   "CLOCK_PERIOD": 20,
