@@ -25,6 +25,23 @@ jobs:
       - name: Run Tiny Tapeout Precheck
         uses: TinyTapeout/tt-gds-action/precheck@ihp-cmos5l
 
+  timing:
+    # The gds job goes green even with setup violations, so check the flow's numbers here
+    needs: gds
+    runs-on: ubuntu-24.04
+    steps:
+      - name: checkout repo
+        uses: actions/checkout@v6
+
+      - name: Download submission
+        uses: actions/download-artifact@v5
+        with:
+          name: tt_submission
+          path: submission
+
+      - name: Fail on negative slack or timing violations
+        run: python3 flow/check_timing.py submission/tt_submission/stats/metrics.csv
+
   gl_test:
     needs: gds
     runs-on: ubuntu-24.04

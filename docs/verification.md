@@ -30,6 +30,7 @@ its own: the same mistake could be in both. The checks are built so that doesn't
 | Formal | Temporal induction with Yosys. See below | `formal/` |
 | Mutation | Each mutant breaks the RTL in one way, and the suite must fail. See below | `test/mutate.sh` |
 | Gate level | The same cocotb tests on the post-route netlist in CI, with fewer random runs | `gl_test` job |
+| Timing | CI fails on negative setup or hold slack, or any violation, at any corner. The gds job alone passed a build 0.57 ns short | `timing` job, `flow/check_timing.py` |
 
 ### Protocols tested
 
