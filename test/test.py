@@ -637,6 +637,36 @@ async def test_timer_loads_clear_pending_and_use_all_bits(dut):
     assert rel(got) == rel(want), f"RTL {rel(got)}, model {rel(want)}"
 
 
+@cocotb.test()
+async def test_contexts_keep_their_own_crc_polynomial(dut):
+    """Both contexts CRC the same byte with different polynomials. A shared polynomial survived as a mutant."""
+    await reset(dut)
+
+    def half(poly):
+        return (f"ldi r1, {poly}\n poly r1\n ldi r0, 0\n msb 1\n sri 0xA5, 8\n bci 8\n"
+                "lp{p}: out 15\n crc r0, msb\n jmp bcn, lp{p}\n mov sr, r0\n push\n halt\n").replace("{p}", str(poly))
+    prog = assemble(half(0x1021) + ".ctx1 second\nsecond: " + half(0x8005))
+    model = Splice()
+    model.load(prog.words)
+    model.two, model.ctx1_pc = True, prog.ctx1
+    model.start()
+    for _ in range(400):
+        model.step(UI_IDLE, 0xFF)
+    want = sorted(model.e2h)
+    assert len(want) == 2 and want[0] != want[1], f"model gave {want}"
+
+    await stop(dut)
+    await load_program(dut, prog.words)
+    await write_reg(dut, 0, 1)  # two contexts
+    await write_reg(dut, 5, prog.ctx1)
+    await start(dut)
+    await ClockCycles(dut.clk, 400)
+    got = sorted(await fifo_read(dut, 2))
+    await stop(dut)
+    await write_reg(dut, 0, 0)
+    assert got == want, f"RTL {[hex(w) for w in got]}, model {[hex(w) for w in want]}"
+
+
 # ------------------------------------------------------------------ RTL against the golden model
 PARK_LINE = 11  # AUX_IN3: every random program waits for this line before doing anything else
 MASK_UO = 0xFE  # uo[0] is the host's MISO, which the model doesn't include
