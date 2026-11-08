@@ -21,7 +21,7 @@ import operator
 import re
 import sys
 
-from .isa import COND, OPERAND, PHASE, SRC, TABLE, WAITC, WANT, encode
+from .isa import COND, CRCDIR, OPERAND, PHASE, SRC, TABLE, WAITC, WANT, encode
 
 
 class AsmError(Exception):
@@ -151,6 +151,10 @@ def _translate(mnemonic, args, flags, named, names, labels, pc, final):
         return [("TSETR", {"s": key(OPERAND, args[0])})]
     if op == "TSET":
         return [(op, {"p": num(args[0])})]
+    if op == "POLY":
+        return [(op, {"s": key(OPERAND, args[0])})]
+    if op == "CRC":
+        return [(op, {"r": reg(args[0]), "dir": key(CRCDIR, args[1])})]
     if op == "TPHASE":
         return [(op, {"mode": key(PHASE, args[0])})]
     if op == "TSRC":

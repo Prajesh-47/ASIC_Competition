@@ -103,6 +103,35 @@ def test_tsetr_period_past_13_bits():
     assert len(rises) >= 2 and all(b - a == 2 * period for a, b in zip(rises, rises[1:])), rises
 
 
+def _crc_of(data, poly, init, msb_first):
+    """Run CRC over bytes on the model: each byte goes out on line 15 (no pin), and CRC steps on that bit."""
+    order = "msb 1" if msb_first else "msb 0"
+    shift = 8 if msb_first else 0  # SRI puts the byte where OUT shifts from first
+    lines = [order, f"ldi r1, {poly}", "poly r1", f"ldi r0, {init}"]
+    for byte in data:
+        lines.append(f"sri {byte}, {shift}")
+        lines += ["out 15", f"crc r0, {'msb' if msb_first else 'lsb'}"] * 8
+    lines.append("halt")
+    m = _run("\n".join(lines), 40 * len(data) + 40)
+    assert m.ctx[0].halted
+    return m.ctx[0].R[0]
+
+
+def test_crc_matches_published_check_values():
+    check = b"123456789"
+    assert _crc_of(check, 0x1021, 0, True) == 0x31C3         # CRC-16/XMODEM (SD data lines)
+    assert _crc_of(check, 0x1021, 0xFFFF, True) == 0x29B1    # CRC-16/IBM-3740 (CCITT-FALSE)
+    assert _crc_of(check, 0xA001, 0, False) == 0xBB3D        # CRC-16/ARC, reflected
+    assert _crc_of(check, 0x8408, 0xFFFF, False) ^ 0xFFFF == 0x906E  # CRC-16/X-25 (HDLC FCS-16)
+    assert _crc_of(check, 0x4599 << 1, 0, True) >> 1 == 0x059E      # CRC-15/CAN, left aligned
+
+
+def test_crc_uses_the_bit_last_shifted_in():
+    # IN shifts the line into SR, and CRC must step on that bit, not on SR's next output bit.
+    m = _run("ldi r1, 0x8000\npoly r1\nldi r0, 0\nin 8\ncrc r0, msb\nhalt", 12)  # AUX0 reads 1 when idle
+    assert m.ctx[0].R[0] == 0x8000 and m.ctx[0].lastb == 1
+
+
 def test_errors_are_rejected():
     for bad in ("set 16, 1", "mode 4, bogus", "jmp nowhere", "outb 4, later\nnop\nlater: nop", "ldi r9, 1",
                 "dly 5000", "bogus 1", "tset 8192", "set 4, 1 side=2"):

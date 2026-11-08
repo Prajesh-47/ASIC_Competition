@@ -651,6 +651,12 @@ def random_program(rng, length, ctx1):
     words += [encode("LDI", r=0, hl=0, v=rng.randrange(1, 40)), encode("MOV", d=6, s=0)]  # set a timeout
     if rng.random() < 0.7:
         words.append(encode("CAPON"))
+    # Straight-line code that always runs, so the variant bins don't depend on random code reaching them.
+    # Without it, each new opcode shuffled which bins went empty. Over 80 programs, missing one of these
+    # variants has odds of about one in a million.
+    words += [encode("MODE", line=rng.randrange(8), src=rng.randrange(7), tick=0, dly=0),
+              encode("TPHASE", mode=rng.randrange(4)),
+              encode("TSRC", line=rng.randrange(12), want=rng.randrange(4))]
     choices = list(TABLE)
     while len(words) < length - 1:
         pc = len(words)
@@ -658,7 +664,7 @@ def random_program(rng, length, ctx1):
             words.append(park)
             continue
         if rng.random() < 0.02:  # reserved encodings must behave as NOP
-            words.append(rng.choice([0xC400, 0xC800, 0xCC00, 0xA800, 0xB000, 0xE5C0, 0xE800, 0xF000, 0xFFFF]))
+            words.append(rng.choice([0xC400, 0xC800, 0xCC00, 0xA800, 0xB000, 0xE5C0, 0xEC00, 0xF000, 0xFFFF]))
             continue
         op = rng.choice(choices)
         chance = rng.random()
@@ -666,6 +672,10 @@ def random_program(rng, length, ctx1):
             op = "TSRC"
         elif chance < 0.08:
             op = "BCI"
+        elif chance < 0.16:
+            # Jumps own 15 of the coverage bins but were drawn like any other opcode, so each new opcode
+            # thinned them until some went empty. A fixed share keeps them independent of the opcode count.
+            op = "JMP"
         if op == "HALT" and rng.random() < 0.9:
             op = "NOP"
         if op == "PULLW" and rng.random() < 0.7:
@@ -711,7 +721,8 @@ def state_differences(dut, model):
             "tcnt": (c.tcnt, engine.tcnt[k]), "tp": (c.tp, engine.tp[k]), "lr": (c.lr, engine.lr[k]),
             "msb": (int(c.msb), engine.msb[k]), "lfsr": (c.lfsr, engine.lfsr[k]),
             "side": (c.side_line, engine.side_ln[k]), "tsl": (c.tsrc_line, engine.ts_line[k]),
-            "tsw": (c.tsrc_want, engine.ts_want[k]),
+            "tsw": (c.tsrc_want, engine.ts_want[k]), "poly": (c.poly, engine.poly[k]),
+            "lastb": (c.lastb, engine.lastb[k]),
         }
         for r in range(4):
             pairs[f"R{r}"] = (c.R[r], engine.rr[k * 4 + r])

@@ -122,7 +122,7 @@ Per-pair FSM: `IDLE → A_HOLDS` (A low first: drive B low) / `B_HOLDS` (mirror)
 - **Missed tick:** if a tick fires while the last one is still pending, `F` is set, so a late program is visible and doesn't silently produce a wrong waveform. `F` changes on the following cycle, and beats any instruction writing `F` in the same cycle, so a miss can't be lost.
 
 ### 5.2 State
-Each context has its own `PC`, `R0`–`R3` (16-bit), `SR` (16-bit), `BC`, `TO`, flags `Z` and `F`, link register, bit timer, tick source, side-set line, bit order and edge memory. Registers are 4 only: CAN and USB use all of them.
+Each context has its own `PC`, `R0`–`R3` (16-bit), `SR` (16-bit), `BC`, `TO`, flags `Z` and `F`, CRC polynomial and last shifted bit, link register, bit timer, tick source, side-set line, bit order and edge memory. Registers are 4 only: CAN and USB use all of them.
 
 **Scheduling is set at `START`:** one context at full rate, or two contexts at half rate each. Both share the program macro, reading on alternate cycles. The synthesis sketch doesn't duplicate the timer per context, so its 32K µm² estimate is low.
 
@@ -140,7 +140,7 @@ The qualifier `.t` on an instruction means: wait for the next tick, then execute
 | Timing | `WAITT`, `TSET`, `TSETR`, `TPHASE`, `TSRC`, `DLY`, `DLYR` | `TSETR` takes the period from a register. Added after the trial |
 | FIFO | `PULLW`, `PULL`, `PUSH` | `PULLW` stalls until data arrives and loads `BC`. `PULL` doesn't stall, and sets `F` when empty |
 | Setup | `BCI`, `SRI`, `MSB`, `SIDE` | `SIDE` picks the line for side-set: a second line changing on the same edge |
-| Data | `LDI`, `MOV`, `ADD`, `ADDR`, `XOR`, `AND`, `CMP`, `CMPI`, `SHR`, `SHL`, `RAND` | `ADDR` adds a register operand, and sets `Z` but not `F`, like `ADD`. Shifts put the bit shifted out in `F`. `RAND` is one LFSR step, for seeded and repeatable fuzzing |
+| Data | `LDI`, `MOV`, `ADD`, `ADDR`, `XOR`, `AND`, `CMP`, `CMPI`, `SHR`, `SHL`, `RAND`, `POLY`, `CRC` | `ADDR` adds a register operand, and sets `Z` but not `F`, like `ADD`. `CRC r, msb` or `lsb` is one CRC step on `Rr`, on the bit last shifted by `OUT`, `OUTB`, `IN` or `INB`, with the polynomial `POLY` set: left with a left-aligned polynomial, or right with a reflected one. It sets `Z` but not `F`. Shifts put the bit shifted out in `F`. `RAND` is one LFSR step, for seeded and repeatable fuzzing |
 | Control | `JMP`, `DJNZ`, `CALL`, `RET`, `TSTB`, `NOP`, `HALT` | `CALL` is one level. `TSTB` sets `Z` from the next output bit. `JMP` conditions: always, Z, NZ, F, !F, BC=0, BC≠0, and a spare |
 | Chip | `IRQ`, `TRIG`, `CAPON`, `CAPOFF`, `CAPMARK` | |
 
@@ -202,8 +202,10 @@ The qualifier `.t` on an instruction means: wait for the next tick, then execute
 | `1110010110` | `SHR` | r 2 |
 | `11100110` | `ADDR` | d 2, s 3 |
 | `11100111` | `TSETR` | s 3 |
+| `11101000` | `POLY` | s 3 |
+| `11101001` | `CRC` | r 2, dir 1 |
 
-Field names: `line` 0–7 is a bus line and 8–11 is AUX; `side` is enable and value; `rel` branches back up to 15 words; `to` is an absolute address, 9 bits so the 512-word macro needs no ISA change, though the 256-word macro uses 8; `hl` selects `LDI`'s high or low byte; `sh` is `SRI`'s shift. The `stamp` bit in `WAIT` is held for the capture unit. `ADDR` and `TSETR` were added after v1 in free codes, so no opcode moved. The assembler picks them when the operand is a register: `add r0, r1`, `tset r1`. About 9.5% of the encoding space is still free.
+Field names: `line` 0–7 is a bus line and 8–11 is AUX; `side` is enable and value; `rel` branches back up to 15 words; `to` is an absolute address, 9 bits so the 512-word macro needs no ISA change, though the 256-word macro uses 8; `hl` selects `LDI`'s high or low byte; `sh` is `SRI`'s shift. The `stamp` bit in `WAIT` is held for the capture unit. `ADDR`, `TSETR`, `POLY` and `CRC` were added after v1 in free codes, so no opcode moved. The assembler picks `ADDR` and `TSETR` when the operand is a register: `add r0, r1`, `tset r1`. About 8.7% of the encoding space is still free.
 
 **Reserved encodings:** `ARM` and `MATCH` for hardware match rules, `CODE`, `CODE2` and `CRCSR` for the line coder (section 5.6).
 

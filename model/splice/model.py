@@ -30,6 +30,8 @@ class Context:
         self.tick_now = False
         self.missed = False
         self.tsrc_line, self.tsrc_want = 0, 3
+        self.poly = 0
+        self.lastb = 0  # the bit most recently shifted by OUT, OUTB, IN or INB, for CRC
         self.last = [1] * 12
 
 
@@ -274,18 +276,22 @@ class Splice:
         elif op == "MODE":
             self.src[f["line"]] = f["src"]
         elif op == "OUT":
-            self.drive(f["line"], self.sbit(c))
+            c.lastb = self.sbit(c)
+            self.drive(f["line"], c.lastb)
             if not f["ns"]:
                 self.shift_out(c)
         elif op == "IN":
-            self.shift_in(c, self.line(f["line"]))
+            c.lastb = self.line(f["line"])
+            self.shift_in(c, c.lastb)
         elif op == "OUTB":
-            self.drive(f["line"], self.sbit(c))
+            c.lastb = self.sbit(c)
+            self.drive(f["line"], c.lastb)
             self.shift_out(c)
             if c.BC:
                 next_pc = (c.pc - f["rel"]) & 0x1FF
         elif op == "INB":
-            self.shift_in(c, self.line(f["line"]))
+            c.lastb = self.line(f["line"])
+            self.shift_in(c, c.lastb)
             if c.BC:
                 next_pc = (c.pc - f["rel"]) & 0x1FF
         elif op == "WAIT":
@@ -366,6 +372,18 @@ class Splice:
         elif op == "ADDR":
             c.R[f["d"]] = (c.R[f["d"]] + self.read(c, f["s"])) & MASK
             c.Z = int(c.R[f["d"]] == 0)
+        elif op == "POLY":
+            c.poly = self.read(c, f["s"])
+        elif op == "CRC":  # one step on the bit last shifted
+            v = c.R[f["r"]]
+            if f["dir"]:
+                fb = ((v >> 15) & 1) ^ c.lastb
+                v = ((v << 1) & MASK) ^ (c.poly if fb else 0)
+            else:
+                fb = (v & 1) ^ c.lastb
+                v = (v >> 1) ^ (c.poly if fb else 0)
+            c.R[f["r"]] = v
+            c.Z = int(v == 0)
         elif op == "XOR":
             c.R[f["d"]] ^= self.read(c, f["s"])
             c.Z = int(c.R[f["d"]] == 0)

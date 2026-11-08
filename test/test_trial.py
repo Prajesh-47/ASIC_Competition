@@ -1028,9 +1028,13 @@ async def sd_run(dut, card, script, cycles=120_000, half=4):
     return words
 
 
-async def sd_start(dut, half=20):
+# The trial firmware, and the version that checks CRC-16 itself with POLY and CRC, added after the trial.
+SD_PROGRAMS = ("trial/sd_host.s", "sd_host.s")
+
+
+async def sd_start(dut, half=20, program="trial/sd_host.s"):
     await stop(dut)
-    await load_program(dut, firmware("trial/sd_host.s", HALF=half).words)
+    await load_program(dut, firmware(program, HALF=half).words)
     await start(dut)
 
 
@@ -1042,7 +1046,12 @@ def cmd_bytes(index, arg=0):
 async def test_sd_initialization_and_responses(dut):
     """The plan's vector, CMD0 = 40 00 00 00 00 95 on the wire, and then R7, R1, R3, R2 and R6."""
     await reset(dut)
-    await sd_start(dut)
+    for program in SD_PROGRAMS:
+        await sd_initialization_once(dut, program)
+
+
+async def sd_initialization_once(dut, program):
+    await sd_start(dut, program=program)
     card = SdCard()
     words = await sd_run(dut, card, [
         (0, cmd_bytes(0), None, []),
@@ -1077,26 +1086,33 @@ def sd_clock_periods(edges):
 async def test_sd_read_block_four_bits(dut):
     """CMD17 and a whole 512-byte block on all four lines, with CRC-16 per line. Measures the real clock."""
     await reset(dut)
-    await sd_start(dut)
-    card = SdCard()
-    words = await sd_run(dut, card, [(1, cmd_bytes(17, 0), 1, [])], cycles=150_000)
-    assert words[3] == 0xA000, f"{[hex(w) for w in words[:5]]}"
-    data = words[4:264]
-    nibbles, tail = sd_block_from_words(data)
-    wanted = block_nibbles(card.block)
-    assert nibbles == wanted, f"first difference at nibble {next(i for i, (a, b) in enumerate(zip(nibbles, wanted)) if a != b)}"
-    assert tail == crc_nibbles(line_crcs(nibbles)), "CRC-16 doesn't match"
-    assert words[264] == 0xA500, f"{hex(words[264])}"
-    periods = sd_clock_periods(card.clock_edges)
-    fastest = min(periods)
-    dut._log.info(f"SD read: fastest clock {50 / fastest:.2f} MHz, required 25. Whole block took {card.clock_edges[-1] - card.clock_edges[0]} cycles")
+    for program in SD_PROGRAMS:
+        await sd_start(dut, program=program)
+        card = SdCard()
+        words = await sd_run(dut, card, [(1, cmd_bytes(17, 0), 1, [])], cycles=150_000)
+        assert words[3] == 0xA000, f"{program}: {[hex(w) for w in words[:5]]}"
+        data = words[4:264]
+        nibbles, tail = sd_block_from_words(data)
+        wanted = block_nibbles(card.block)
+        assert nibbles == wanted, f"{program}: first difference at nibble {next(i for i, (a, b) in enumerate(zip(nibbles, wanted)) if a != b)}"
+        assert tail == crc_nibbles(line_crcs(nibbles)), f"{program}: CRC-16 doesn't match"
+        assert words[264] == 0xA500, f"{program}: {hex(words[264])}"  # the new firmware's own CRC check passed too
+        periods = sd_clock_periods(card.clock_edges)
+        fastest = min(periods)
+        dut._log.info(f"SD read, {program}: fastest clock {50 / fastest:.2f} MHz, required 25. "
+                      f"Whole block took {card.clock_edges[-1] - card.clock_edges[0]} cycles")
 
 
 @cocotb.test()
 async def test_sd_write_block_four_bits(dut):
     """CMD24 and a whole block. The card model checks each line's CRC-16 and sends its status token."""
     await reset(dut)
-    await sd_start(dut)
+    for program in SD_PROGRAMS:
+        await sd_write_once(dut, program)
+
+
+async def sd_write_once(dut, program):
+    await sd_start(dut, program=program)
     card = SdCard()
     block = [(i * 13 + 5) & 0xFF for i in range(512)]
     nibbles = block_nibbles(block)
@@ -1108,7 +1124,7 @@ async def test_sd_write_block_four_bits(dut):
     assert card.write_status == 0b010
     assert 0xA502 in words, f"{[hex(w) for w in words]}"
     periods = sd_clock_periods(card.clock_edges)
-    dut._log.info(f"SD write: fastest clock {50 / min(periods):.2f} MHz, required 25")
+    dut._log.info(f"SD write, {program}: fastest clock {50 / min(periods):.2f} MHz, required 25")
 
 
 @cocotb.test()
@@ -1134,6 +1150,23 @@ async def test_sd_detects_corruption_and_recovers_from_silence(dut):
     nibbles, tail = sd_block_from_words(words[4:264])
     assert tail != crc_nibbles(line_crcs(nibbles)), "CRC-16 should catch a flipped data bit"
 
+    # The new firmware checks CRC-16 itself, and names the line: nibble 100's DAT0 bit was flipped
+    await sd_start(dut, program="sd_host.s")
+    card = SdCard()
+    card.flip_read = 100
+    words = await sd_run(dut, card, [(1, cmd_bytes(17, 0), 1, [])], cycles=150_000)
+    assert words[264] == 0xC101, f"firmware CRC check: {hex(words[264])}"
+    await sd_start(dut, program="sd_host.s")
+    card = SdCard()
+    card.silent = {8}
+    words = await sd_run(dut, card, [(1, cmd_bytes(8, 0x1AA), None, []), (1, cmd_bytes(55), 0, [])], cycles=30_000)
+    assert words[0] == 0xEE00 and 0xA000 in words, f"new firmware: {[hex(w) for w in words]}"
+    card = SdCard()
+    card.bad_crc7 = True
+    await sd_start(dut, program="sd_host.s")
+    words = await sd_run(dut, card, [(1, cmd_bytes(8, 0x1AA), 0, [])], cycles=12_000)
+    assert 0xC700 in words, f"new firmware missed a bad response CRC: {[hex(w) for w in words]}"
+
 
 @cocotb.test()
 async def test_sd_dat_line_fault(dut):
@@ -1145,6 +1178,13 @@ async def test_sd_dat_line_fault(dut):
     words = await sd_run(dut, card, [(1, cmd_bytes(17, 0), 1, [])], cycles=150_000)
     nibbles, tail = sd_block_from_words(words[4:264])
     assert tail != crc_nibbles(line_crcs(nibbles)) or nibbles != block_nibbles(card.block), "the fault went unnoticed"
+    await sd_start(dut, program="sd_host.s")
+    card = SdCard()
+    card.stuck_low = 2
+    words = await sd_run(dut, card, [(1, cmd_bytes(17, 0), 1, [])], cycles=150_000)
+    # A line stuck low reads as zeros with a CRC of zeros, and SD's CRC-16 starts from 0, so the check passes:
+    # no CRC can catch this. The trial test above only caught it by knowing what the block should be.
+    assert words[264] == 0xA500, f"expected the CRC check to pass on a stuck-low line: {hex(words[264])}"
 
     await sd_start(dut)
     card = SdCard()

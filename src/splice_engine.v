@@ -65,6 +65,8 @@ module splice_engine (
   reg [3:0]  ts_line [0:1];
   reg [1:0]  ts_want [0:1];
   reg [11:0] last    [0:1];   // what this context saw at its previous slot, for edge waits
+  reg [15:0] poly    [0:1];   // CRC polynomial, set by POLY
+  reg        lastb   [0:1];   // the bit last shifted by OUT, OUTB, IN or INB, which CRC steps on
 
   reg        prim;            // first cycle of a run: only fetches
   reg        cur;
@@ -139,6 +141,8 @@ module splice_engine (
   wire is_xor    = ins[15:8] == 8'b11100100;
   wire is_addr   = ins[15:8] == 8'b11100110;
   wire is_tsetr  = ins[15:8] == 8'b11100111;
+  wire is_poly   = ins[15:8] == 8'b11101000;
+  wire is_crc    = ins[15:8] == 8'b11101001;
   wire is_rand   = ins[15:6] == 10'b1110010100;
   wire is_shl    = ins[15:6] == 10'b1110010101;
   wire is_shr    = ins[15:6] == 10'b1110010110;
@@ -188,7 +192,7 @@ module splice_engine (
 
   wire [15:0] opnd_alu = operand(ins[5:3], r0_c, r1_c, r2_c, r3_c, sr_c, bc_c, to_c);  // AND, XOR, ADDR
   wire [15:0] opnd_mov = operand(ins[4:2], r0_c, r1_c, r2_c, r3_c, sr_c, bc_c, to_c);  // MOV, CMP b
-  wire [15:0] opnd_cmp = operand(ins[7:5], r0_c, r1_c, r2_c, r3_c, sr_c, bc_c, to_c);  // CMP a, TSETR
+  wire [15:0] opnd_cmp = operand(ins[7:5], r0_c, r1_c, r2_c, r3_c, sr_c, bc_c, to_c);  // CMP a, TSETR, POLY
 
   wire        sbit = msb[c] ? sr[c][15] : sr[c][0];
   wire [15:0] sr_shifted_out = msb[c] ? {sr[c][14:0], 1'b0} : {1'b0, sr[c][15:1]};
@@ -294,6 +298,10 @@ module splice_engine (
   wire [15:0] alu_xor = rr[{c, rn_alu}] ^ opnd_alu;
   wire [15:0] alu_and = rr[{c, rn_alu}] & opnd_alu;
   wire [15:0] alu_addr = rr[{c, rn_alu}] + opnd_alu;
+  // CRC step on the last shifted bit: left with a left-aligned polynomial, or right with a reflected one
+  wire [15:0] crc_reg  = rr[{c, rn_alu}];
+  wire        crc_fb   = (ins[5] ? crc_reg[15] : crc_reg[0]) ^ lastb[c];
+  wire [15:0] alu_crc  = (ins[5] ? {crc_reg[14:0], 1'b0} : {1'b0, crc_reg[15:1]}) ^ ({16{crc_fb}} & poly[c]);
   wire [15:0] lfsr_nx = {1'b0, lfsr[c][15:1]} ^ (lfsr[c][0] ? 16'hB400 : 16'h0000);
   wire [15:0] mov_val = opnd_mov;
   wire [16:0] phase_half = {2'd0, tp[c][15:1]};
@@ -306,12 +314,13 @@ module splice_engine (
   wire        is_shift = is_shr || is_shl;
   wire        mov_rr = is_mov && !ins[7];
 
-  wire rr_we = ex && (is_ldi || is_add || is_addr || is_xor || is_and || is_shift || is_rand || is_djnz || mov_rr);
-  wire [1:0] rr_idx = ({2{is_ldi}} & rn_ldi) | ({2{is_add}} & rn_add) | ({2{is_xor || is_and || is_addr}} & rn_alu)
+  wire rr_we = ex && (is_ldi || is_add || is_addr || is_crc || is_xor || is_and || is_shift || is_rand || is_djnz || mov_rr);
+  wire [1:0] rr_idx = ({2{is_ldi}} & rn_ldi) | ({2{is_add}} & rn_add) | ({2{is_xor || is_and || is_addr || is_crc}} & rn_alu)
                     | ({2{is_shift || is_rand}} & rn_sft) | ({2{is_djnz}} & rn_djnz) | ({2{mov_rr}} & ins[6:5]);
   wire [15:0] rr_wd = ({16{is_ldi}} & (ins[9] ? {ins[8:1], ldi_reg[7:0]} : {8'd0, ins[8:1]}))
                     | ({16{is_add}} & alu_add)
                     | ({16{is_addr}} & alu_addr)
+                    | ({16{is_crc}} & alu_crc)
                     | ({16{is_xor}} & alu_xor)
                     | ({16{is_and}} & alu_and)
                     | ({16{is_shr}} & {1'b0, sft_reg[15:1]})
@@ -320,8 +329,8 @@ module splice_engine (
                     | ({16{is_djnz}} & djnz_dec)
                     | ({16{mov_rr}} & mov_val);
 
-  wire z_we = is_add || is_addr || is_xor || is_and || is_cmp || is_cmpi || is_tstb || is_probe;
-  wire z_wd = (is_add && alu_add == 0) || (is_addr && alu_addr == 0) || (is_xor && alu_xor == 0) || (is_and && alu_and == 0)
+  wire z_we = is_add || is_addr || is_crc || is_xor || is_and || is_cmp || is_cmpi || is_tstb || is_probe;
+  wire z_wd = (is_add && alu_add == 0) || (is_addr && alu_addr == 0) || (is_crc && alu_crc == 0) || (is_xor && alu_xor == 0) || (is_and && alu_and == 0)
            || (is_cmp && opnd_cmp == opnd_mov) || (is_cmpi && add_reg == {8'd0, ins[7:0]})
            || (is_tstb && sbit) || (is_probe && lines[ln_p]);
 
@@ -374,6 +383,8 @@ module splice_engine (
         ts_line[i] <= 0;
         ts_want[i] <= 2'd3;
         last[i] <= 12'hFFF;
+        poly[i] <= 0;
+        lastb[i] <= 0;
       end
       for (i = 0; i < 8; i = i + 1) rr[i] <= 0;
     end else begin
@@ -450,6 +461,9 @@ module splice_engine (
                 ts_want[c] <= ins[3:2];
                 pending[c] <= 1'b0;
               end
+              if (is_poly) poly[c] <= opnd_cmp;
+              if (is_out || is_outb) lastb[c] <= sbit;
+              if (is_in || is_inb) lastb[c] <= in_bit;
               if (is_msb) msb[c] <= ins[7];
               if (is_side) side_ln[c] <= ln_p;
               if (is_mov && ins[7:5] == 3'd6) to[c] <= mov_val;

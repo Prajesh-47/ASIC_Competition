@@ -46,6 +46,13 @@ run "ADDR doesn't set Z" $E "(is_addr && alu_addr == 0) ||" ""
 run "TSETR cut to 13 bits" $E "tp[c] <= opnd_cmp;" "tp[c] <= {3'd0, opnd_cmp[12:0]};"
 run "TSETR keeps the old tick pending" $E "tcnt[c] <= {1'b0, opnd_cmp};
                 pending[c] <= 1'b0;" "tcnt[c] <= {1'b0, opnd_cmp};"
+run "CRC always shifts left" $E "wire        crc_fb   = (ins[5] ? crc_reg[15] : crc_reg[0]) ^ lastb[c];
+  wire [15:0] alu_crc  = (ins[5] ?" "wire        crc_fb   = crc_reg[15] ^ lastb[c];
+  wire [15:0] alu_crc  = (1'b1 ?"
+run "CRC ignores the shifted bit" $E "crc_reg[0]) ^ lastb[c];" "crc_reg[0]);"
+run "IN doesn't record the bit for CRC" $E "if (is_in || is_inb) lastb[c] <= in_bit;" ";"
+run "OUT doesn't record the bit for CRC" $E "if (is_out || is_outb) lastb[c] <= sbit;" ";"
+run "contexts share a polynomial" $E "({16{crc_fb}} & poly[c])" "({16{crc_fb}} & poly[0])"
 run "TPHASE R1 cut to 14 bits" $E "default: tcnt[c] <= {1'b0, rr[{c, 2'd1}]};" "default: tcnt[c] <= {3'd0, rr[{c, 2'd1}][13:0]};"
 run "missed tick doesn't set F" $E "if (tick_now[i] && pending[i]) f[i] <= 1'b1;" ";"
 run "tick not consumed" $E "if (active && tick_q) pending[c] <= 1'b0;" ";"

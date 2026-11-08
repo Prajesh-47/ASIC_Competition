@@ -50,6 +50,8 @@ TABLE = {
     # Added after v1 in free codes, so no existing opcode moved
     "ADDR": ("11100110", (("d", 2), ("s", 3))),
     "TSETR": ("11100111", (("s", 3),)),
+    "POLY": ("11101000", (("s", 3),)),
+    "CRC": ("11101001", (("r", 2), ("dir", 1))),
     "RAND": ("1110010100", (("r", 2),)),
     "SHL": ("1110010101", (("r", 2),)),
     "SHR": ("1110010110", (("r", 2),)),
@@ -59,6 +61,7 @@ COND = {"AL": 0, "Z": 1, "NZ": 2, "F": 3, "NF": 4, "BC0": 5, "BCN": 6}
 WAITC = {"LO": 0, "HI": 1, "RISE": 2, "FALL": 3}
 WANT = {"FALL": 0, "RISE": 1, "BOTH": 2, "OFF": 3}
 PHASE = {"PERIOD": 0, "HALF": 1, "THREEHALF": 2, "R1": 3}
+CRCDIR = {"LSB": 0, "MSB": 1}  # LSB: shift right, reflected polynomial. MSB: shift left, left-aligned polynomial
 SRC = {"HIZ": 0, "ENG": 1, "PASS": 2, "INV": 3, "F0": 4, "F1": 5, "ODB": 6}
 # 3-bit register operand. As a MOV destination, 7 seeds the LFSR; as a source it is SR >> 8.
 OPERAND = {"R0": 0, "R1": 1, "R2": 2, "R3": 3, "SR": 4, "BC": 5, "TO": 6, "LOW": 7, "SEED": 7}
