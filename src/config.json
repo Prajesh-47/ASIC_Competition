@@ -23,6 +23,9 @@
   "//": "Experiment: repair timing at the slow corner too. The default repairs only typical, where the worst",
   "//": "path had about 7 ns to spare while the slow corner, which signoff checks, had 0.52.",
   "TIMING_VIOLATION_CORNERS": ["*typ*", "*slow*"],
+  "//": "Experiment: and aim for 0.5 ns of setup slack, since estimates before routing are optimistic",
+  "PL_RESIZER_SETUP_SLACK_MARGIN": 0.5,
+  "GRT_RESIZER_SETUP_SLACK_MARGIN": 0.5,
 
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
   "//": "The value is in nanoseconds, so 20ns == 50MHz.",
