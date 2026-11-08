@@ -15,7 +15,7 @@
   "//": "Users have reported that values up to 80 worked well for them.",
   "PL_TARGET_DENSITY_PCT": 60,
 
-  "//": "Experiment: spend the spare area on timing. Baseline is AREA 0 with these repairs off.",
+  "//": "Spend the spare area on timing (from exp/timing-v1, gds run 42352036161): slow corner setup slack +3.16 ns vs +0.115 ns without, slew violations 30 vs 126.",
   "PL_TIMING_DRIVEN": true,
   "RUN_POST_GRT_RESIZER_TIMING": true,
   "RUN_POST_GRT_DESIGN_REPAIR": true,

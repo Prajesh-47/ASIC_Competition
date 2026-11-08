@@ -191,8 +191,8 @@ Fixing the most important of these is the next phase.
 
 ## What's been shown, and what hasn't
 
-**Passing in the real chip-build flow:** build, DRC, LVS, precheck, and the full test suite at gate level. On the
-timing experiment branch, not merged yet, the slow corner also passes at 50 MHz, by 0.115 ns.
+**Passing in the real chip-build flow:** build, DRC, LVS, precheck, and the full test suite at gate level. The
+slow corner passes at 50 MHz with 3.16 ns to spare, with no setup or hold violations.
 
 **Passing in simulation, with idealised electricals:**
 - UART, SPI and I2C, as controller and target.
@@ -213,8 +213,9 @@ timing experiment branch, not merged yet, the slow corner also passes at 50 MHz,
 1. **Nothing is proven on silicon.** CMOS5L has no chips back yet, so there are no measured pad numbers.
 2. **The host link.** The trial showed it's the main limit on sustained traffic, and the planned board host is
    too slow for it.
-3. **Timing margin is thin.** The passing build has 0.115 ns to spare at the slow corner and some slow edges
-   (slew). Two cleaner variants were built, and their numbers are still to be read.
+3. **Electrical rule violations remain.** Setup margin is now 3.16 ns at the slow corner, but the build still has
+   30 slow edges (slew), 15 overloaded nets (capacitance) and 75 fanout violations to clear before signoff. CI
+   also doesn't fail a build that misses timing: one variant missed setup by 0.57 ns and still showed green.
 4. **ISA changes cost area and timing.** Every gap the trial found has a fix, but each fix adds logic.
 5. **Time.** This is a solo entry, with about 10 weeks left.
 
