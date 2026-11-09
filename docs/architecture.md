@@ -29,7 +29,7 @@ From their update email: there is no fixed weighting, and **flexibility is the m
                  │
                  ▼
         ┌────────────────────┐     ┌──────────────┐
-        │  Timing engine     │◄───►│ Program SRAM │  256x16
+        │  Timing engine     │◄───►│ Program SRAM │  512x16
         │  (16-bit ISA,      │     └──────────────┘
         │   cycle-exact)     │     ┌──────────────┐
         └──┬───────────┬─────┘     │ Capture SRAM │  512x16
@@ -124,7 +124,9 @@ Per-pair FSM: `IDLE → A_HOLDS` (A low first: drive B low) / `B_HOLDS` (mirror)
 ### 5.2 State
 Each context has its own `PC`, `R0`–`R3` (16-bit), `SR` (16-bit), `BC`, `TO`, flags `Z`, `F` and `M`, CRC polynomial and last shifted bit, link register, bit timer, tick source, side-set line, bit order and edge memory. Registers are 4 only: CAN and USB use all of them.
 
-**Scheduling is set at `START`:** one context at full rate, or two contexts at half rate each. Both share the program macro, reading on alternate cycles. The synthesis sketch doesn't duplicate the timer per context, so its 32K µm² estimate is low.
+**Scheduling is set at `START` (v2, approved 2026-11-10 for 8x4):** 1, 2, 3 or 4 contexts take turns, one cycle each, so with `n` contexts each runs at 1/`n` rate. All four contexts are full: each has every register above and its own timer, which keep running every cycle. They share the program macro, and the fetch in each cycle is for the next slot's context. Host register 0 holds the count less one (writing 1 still means two), and registers 16-19 hold the start addresses of contexts 2 and 3.
+
+**Links between contexts:** two 4-word link FIFOs. Each context's `PULL`/`PULLW` and `PUSH` are routed, by host registers 20 and 21 (2 bits per context: host, link 0 or link 1), so one context's output is another's input with no host in between. Programs don't change: a UART receiver and an SPI controller written for the host become a bridge by routing alone. A full link sets `F` on `PUSH`, like the host FIFO. Register 22 reads the link levels and the halted flags.
 
 ### 5.3 Bit timer and tick
 The qualifier `.t` on an instruction means: wait for the next tick, then execute. A tick comes from one of two sources:
@@ -140,7 +142,9 @@ The qualifier `.t` on an instruction means: wait for the next tick, then execute
 | Timing | `WAITT`, `TSET`, `TSETR`, `TPHASE`, `TSRC`, `DLY`, `DLYR`, `TCAP` | `TSETR` takes the period from a register. Added after the trial. `TCAP rd` reads the cycles between the context's last two ticks, saturating at 0xFFFF, latched by hardware at every tick. With `TSRC line, both` that is the length of each line interval, so firmware can measure an edge after it has passed instead of waiting at it. `TCAP.t` reads the interval that ended at the tick it waited for |
 | FIFO | `PULLW`, `PULL`, `PUSH` | `PULLW` stalls until data arrives and loads `BC`. `PULL` doesn't stall, and sets `F` when empty |
 | Setup | `BCI`, `SRI`, `MSB`, `SIDE` | `SIDE` picks the line for side-set: a second line changing on the same edge |
-| Data | `LDI`, `MOV`, `ADD`, `ADDR`, `XOR`, `AND`, `CMP`, `CMPU`, `CMPI`, `SHR`, `SHL`, `RAND`, `POLY`, `CRC` | `ADDR` adds a register operand, and sets `Z` but not `F`, like `ADD`. `CRC r, msb` or `lsb` is one CRC step on `Rr`, on the bit last shifted by `OUT`, `OUTB`, `IN` or `INB`, with the polynomial `POLY` set: left with a left-aligned polynomial, or right with a reflected one. It sets `Z` but not `F`. Shifts put the bit shifted out in `F`. `RAND` is one LFSR step, for seeded and repeatable fuzzing. `CMPU a, b` is unsigned: `Z` when equal, `F` when a < b |
+| **Lanes** | `LANES w` | `OUT`, `IN`, `OUTB` and `INB` move 1, 2, 4 or 8 lines at once: the lane group is the lane-aligned block of lines containing the named one, line base+k being bit k, and `SR` shifts by the width. `BC` counts groups. SD 4-bit, QSPI, eMMC 8-bit and parallel buses. Per context; `LANES 1` is the v1 behaviour |
+| Tables | `LDP rd, rs`, `JMPR s` | `LDP` reads the program word at the address in `rs` into `rd`, taking 2 of the context's slots: the word is fetched in place of that context's next instruction fetch. `JMPR` jumps to a register or operand. Together: 4B/5B and other code tables, and jump tables for protocol state machines. `.word` puts data in the program |
+| Data | `LDI`, `MOV`, `ADD`, `ADDR`, `XOR`, `AND`, `CMP`, `CMPU`, `CMPI`, `SHR`, `SHL`, `RAND`, `POLY`, `CRC`, `CRCW` | `ADDR` adds a register operand, and sets `Z` but not `F`, like `ADD`. `CRC r, msb` or `lsb` is one CRC step on `Rr`, on the bit last shifted by `OUT`, `OUTB`, `IN` or `INB`, with the polynomial `POLY` set: left with a left-aligned polynomial, or right with a reflected one. It sets `Z` but not `F`. With lanes, `CRC r, dir, lane` steps on one lane's bit, and `CRCW r, dir, lane` steps one lane's 4 bits of `SR` (2 at 8 lanes) in one cycle, for per-line CRCs like SD's four CRC-16s. Shifts put the bit shifted out in `F`. `RAND` is one LFSR step, for seeded and repeatable fuzzing. `CMPU a, b` is unsigned: `Z` when equal, `F` when a < b |
 | Control | `JMP`, `DJNZ`, `CALL`, `RET`, `TSTB`, `NOP`, `HALT` | `CALL` is one level. `TSTB` sets `Z` from the next output bit. `JMP` conditions: always, Z, NZ, F, !F, BC=0, BC≠0, M (missed tick; reads and clears). After `PROBE`, `Z` means the line is high, so the assembler takes `jmp hi` and `jmp lo` for `z` and `nz`, and warns on `z` or `nz` straight after a `PROBE` |
 | Chip | `IRQ`, `TRIG`, `CAPON`, `CAPOFF`, `CAPMARK` | |
 
@@ -203,11 +207,14 @@ The qualifier `.t` on an instruction means: wait for the next tick, then execute
 | `11100110` | `ADDR` | d 2, s 3 |
 | `11100111` | `TSETR` | s 3 |
 | `11101000` | `POLY` | s 3 |
-| `11101001` | `CRC` | r 2, dir 1 |
+| `11101001` | `CRC` | r 2, dir 1, word 1, lane 3 |
 | `11101010` | `CMPU` | a 3, b 3 |
 | `11101011` | `TCAP` | r 2, tick 1 |
+| `11101101` | `LDP` | d 2, s 2 |
+| `11101110` | `JMPR` | s 3 |
+| `11101111` | `LANES` | w 2 |
 
-Field names: `line` 0–7 is a bus line and 8–11 is AUX; `side` is enable and value; `rel` branches back up to 15 words; `to` is an absolute address, 9 bits so the 512-word macro needs no ISA change, though the 256-word macro uses 8; `hl` selects `LDI`'s high or low byte; `sh` is `SRI`'s shift. The `stamp` bit in `WAIT` is held for the capture unit. `ADDR`, `TSETR`, `POLY` and `CRC` were added after v1 in free codes, so no opcode moved. The assembler picks `ADDR` and `TSETR` when the operand is a register: `add r0, r1`, `tset r1`. About 8.7% of the encoding space is still free.
+Field names: `line` 0–7 is a bus line and 8–11 is AUX; `side` is enable and value; `rel` branches back up to 15 words; `to` is an absolute address, 9 bits, for the 512-word program macro (v2; v1 had 256 words); `hl` selects `LDI`'s high or low byte; `sh` is `SRI`'s shift. The `stamp` bit in `WAIT` is held for the capture unit. `ADDR`, `TSETR`, `POLY` and `CRC` were added after v1 in free codes, so no opcode moved. The assembler picks `ADDR` and `TSETR` when the operand is a register: `add r0, r1`, `tset r1`. `LDP`, `JMPR` and `LANES`, and `CRC`'s `word` and `lane` fields, came from `explore/isa-lanes-int` (lab/explore/isa.md) and were approved for v2 on 2026-11-10; every program that doesn't use them behaves as before. That branch's `ROUTE` mailbox (`11101100`) was dropped, since the link FIFOs do the same job for any pair of contexts; its code is free again. About 6.7% of the encoding space is free.
 
 **Reserved encodings:** `ARM` and `MATCH` for hardware match rules, `CODE`, `CODE2` and `CRCSR` for the line coder (section 5.6).
 
@@ -228,7 +235,7 @@ Field names: `line` 0–7 is a bus line and 8–11 is AUX; `side` is enable and 
 - **Not built:** line-pattern match start.
 
 ## 7. Memory
-- **Decision (approved and hardened 2026-11-05):** two separate single-port SRAM macros: `RM_IHPSG13_1P_256x16` for program and `RM_IHPSG13_1P_512x16` for capture. See section 7.3.
+- **Decision (approved and hardened 2026-11-05; program memory grown to 512 words for v2 on 2026-11-10):** two separate single-port SRAM macros, both `RM_IHPSG13_1P_512x16`: one for program and one for capture. See section 7.3. Four contexts need room for several firmwares at once: SD with lanes alone takes 246 words.
 - **Accepted:** the organisers' update email says IHP SRAM macros may be used, including more than one, if they fit and pass precheck. CMOS5L has no silicon back yet, so macro behaviour on this process is unproven.
 - Fallback: latch RAM — 128×16 program + 64×16 capture. Architecture must work at either size (address widths parameterised).
 
@@ -278,8 +285,8 @@ Options considered (memory area only, before halos):
 
 | Option | µm² | Words (program/capture) | Outcome |
 |---|---:|---|---|
-| Two macros, 256 + 512 | 73,436 | 256/512 | **Chosen** |
-| Two macros, 512 + 512 | 90,618 | 512/512 | Backup if firmware outgrows 256 words |
+| Two macros, 256 + 512 | 73,436 | 256/512 | Chosen for v1 |
+| Two macros, 512 + 512 | 90,618 | 512/512 | **Chosen for v2** (8x4, four contexts) |
 | Two macros, 256 + 256 | 56,254 | 256/256 | Only if area gets tight |
 | One 1-port 512, fetch has priority, small capture buffer | ~51,000 | 512 shared | Runner-up: engine timing stays exact, but capture can overflow in tight loops and needs more proofs |
 | One 2-port 512 | 88,482 | 512 shared | Rejected: more area than the chosen option for fewer words |

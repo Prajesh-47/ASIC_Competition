@@ -56,14 +56,17 @@ This one is no longer just an idea: it runs in simulation at 100 and 400 kHz.
 
 ## How it works
 
-- **The engine** is a small processor where every instruction takes an exact, known time. It has two
-  **contexts**, so it can run two programs side by side, for example one for each direction of a bus.
+- **The engine** is a small processor where every instruction takes an exact, known time. It has four
+  **contexts**, so it can run up to four programs side by side, for example one for each direction of a bus.
+  Two **link** buffers let one context's output feed another's input, so the chip can bridge one protocol to
+  another (UART in, SPI out) with no host involved. Instructions can move 1, 2, 4 or 8 lines at once
+  (**lanes**), read tables from program memory, and jump through a register.
 - **The line fabric** is a switch on each of the 8 bus lines. On an exact cycle, firmware can make a line
   copy its partner, invert it, be forced high or low, or be driven by the engine. All interposing comes from
   this one mechanism.
 - **The open-drain bridge** lets I2C pass through, where either side can pull a line low. SPLICE has to copy
   that to the other side without mistaking its own output for a new signal and latching up.
-- **Memory** is two SRAM blocks: one for the program (256 words) and one for captured traffic (512 entries).
+- **Memory** is two SRAM blocks: one for the program (512 words) and one for captured traffic (512 entries).
 - **The capture unit** records timestamped signal changes. Host software turns them into a file PulseView opens.
 - **The host interface** is an SPI port that a computer or microcontroller uses to load programs and read
   results. On the competition's demo board that host is an RP2350 microcontroller, running a small program in
@@ -133,11 +136,11 @@ receive with its clock recovery removed has to fail.
 |---|---|---|---|---|
 | **Priority** | **Adaptability first, speed later** | The organisers judge flexibility above all, and aren't looking for the fastest chip | Spending more time on speed now | Adaptability being settled |
 | **Pitch** | Lead with flexibility; interposing is the differentiator | A scan of 22 entrants' READMEs found nobody describing inline alteration | Leading with exact timing, which others already claim | Finding a competitor doing the same |
-| **Memory** | Two SRAM macros: 256x16 program, 512x16 capture, 8% of the die | A fetch and a capture write can never collide, and macros are allowed | One shared macro; flop memory (twice the area for a quarter of the storage) | Firmware outgrowing 256 words. The largest trial program uses 223 |
+| **Memory** | Two SRAM macros: 512x16 program, 512x16 capture, 7% of the 8x4 die | A fetch and a capture write can never collide, and macros are allowed | One shared macro; flop memory (twice the area for a quarter of the storage) | Firmware outgrowing 512 words across all four contexts. The largest single program, SD with lanes, uses 246 |
 | **Power for the macros** | Our own script, 117 lines | The project aims for original work over reuse, and it passes the same checks | A 667-line script copied from another entrant | Power or routing problems |
 | **ISA v1** | Fused instructions, ticks, side-set, `CALL`/`RET`, a bit test, `RAND` | Smallest firmware, and it ran every protocol tried | Spec draft; PIO-style clock divider; timer alone | The gaps the trial found, which come next |
 | **Tomasulo / out-of-order** | Rejected | A perfect version saves at most 2.8%, and those cycles would only be spent waiting | | |
-| **Two contexts** | One context at full rate, or two at half rate | Altering both directions at once needs two threads of control, and it's far smaller than two engines | Two separate engines | Half rate being too slow in practice |
+| **Four contexts** | 1 to 4 contexts, each at 1/n rate, all with their own timers, plus two link FIFOs between them (v2, 8x4) | Altering both directions at once needs two threads of control, and bridging or running several protocols needs more. Far smaller than separate engines, and on 8x4 the area is there | Two contexts only (v1); light contexts with latch storage (+16% instead of +54%, but latches on unproven silicon) | 1/n rate being too slow for a protocol: run it with fewer contexts |
 | **Bridge holdoff** | A programmable register | No fixed value works at both 100 and 400 kHz | A fixed value | Real bus behaviour |
 | **Fast pass-through** | One flop instead of two, per line, off by default | 50% faster inline SPI. Only a line where someone turns it on carries the metastability risk | Always on; not having it | Testing shows the risk isn't worth it |
 | **Engine decode for timing** | Instructions decoded straight from their bits, one write path per register | It fixed most of the timing problem at the slow corner without changing behaviour | A 1-cycle penalty on taken jumps, which would cost tight programs like USB | |
@@ -185,7 +188,7 @@ which count as weaker evidence. Full results are in [`adaptability.md`](adaptabi
 - A timer period that can't be set from a register.
 - A flag shared by too many things.
 - A `PROBE` instruction whose result reads backwards, which caused 3 of my bugs.
-- Contexts that can't pass data to each other.
+- Contexts that can't pass data to each other. (v2 adds link FIFOs between four contexts.)
 
 Fixing the most important of these is the next phase.
 

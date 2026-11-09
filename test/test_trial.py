@@ -1198,6 +1198,29 @@ async def test_sd_dat_line_fault(dut):
     assert 0xA505 in words, f"{[hex(w) for w in words]}"
 
 
+SD_LANES = "../../lab/explore/fw/sd_host_lanes.s"  # explore/isa-lanes-table: LANES and CRCW
+
+
+@cocotb.test()
+async def test_sd_lanes_read_write_and_crc(dut):
+    """The exploration firmware on RTL: a whole block each way at 25 MHz inside a word, and a flipped bit named."""
+    await reset(dut)
+    await sd_start(dut, program=SD_LANES)
+    card = SdCard()
+    words = await sd_run(dut, card, [(1, cmd_bytes(17, 0), 1, [])], cycles=150_000)
+    nibbles, tail = sd_block_from_words(words[4:264])
+    assert words[3] == 0xA000 and nibbles == block_nibbles(card.block), f"{[hex(w) for w in words[:5]]}"
+    assert tail == crc_nibbles(line_crcs(nibbles)) and words[264] == 0xA500, f"{hex(words[264])}"
+    dut._log.info(f"SD read, lanes: fastest clock {50 / min(sd_clock_periods(card.clock_edges)):.2f} MHz. "
+                  f"Whole block took {card.clock_edges[-1] - card.clock_edges[0]} cycles")
+    await sd_write_once(dut, SD_LANES)
+    await sd_start(dut, program=SD_LANES)
+    card = SdCard()
+    card.flip_read = 100
+    words = await sd_run(dut, card, [(1, cmd_bytes(17, 0), 1, [])], cycles=150_000)
+    assert words[264] == 0xC101, f"firmware CRC check: {hex(words[264])}"
+
+
 # ------------------------------------------------------------------ 100BASE-TX, the expected limit
 CODE_4B5B = {0: 0x1E, 1: 0x09, 2: 0x14, 3: 0x15, 4: 0x0A, 5: 0x0B, 6: 0x0E, 7: 0x0F,
              8: 0x12, 9: 0x13, 10: 0x16, 11: 0x17, 12: 0x1A, 13: 0x1B, 14: 0x1C, 15: 0x1D}

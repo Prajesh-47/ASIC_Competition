@@ -815,6 +815,7 @@ async def test_contexts_keep_their_own_crc_polynomial(dut):
 
 
 # ------------------------------------------------------------------ RTL against the golden model
+MODEL_ONLY = set()  # explore/isa-lanes-table: instructions in the model but not yet in RTL
 PARK_LINE = 11  # AUX_IN3: every random program waits for this line before doing anything else
 MASK_UO = 0xFE  # uo[0] is the host's MISO, which the model doesn't include
 COVERAGE = {}
@@ -836,14 +837,17 @@ def random_program(rng, length, ctx1):
     words += [encode("MODE", line=rng.randrange(8), src=rng.randrange(7), tick=0, dly=0),
               encode("TPHASE", mode=rng.randrange(4)),
               encode("TSRC", line=rng.randrange(12), want=rng.randrange(4))]
-    choices = list(TABLE)
+    # CRCW at each width: random code reached it at 4 lanes zero times in 80 programs once 4 contexts came in
+    words += [encode("LANES", w=rng.randrange(4)),
+              encode("CRC", r=rng.randrange(4), dir=rng.randrange(2), word=1, lane=rng.randrange(8))]
+    choices = [op for op in TABLE if op not in MODEL_ONLY]
     while len(words) < length - 1:
         pc = len(words)
         if pc in starts:
             words.append(park)
             continue
         if rng.random() < 0.02:  # reserved encodings must behave as NOP
-            words.append(rng.choice([0xC400, 0xC800, 0xCC00, 0xA800, 0xB000, 0xE5C0, 0xEC00, 0xF000, 0xFFFF]))
+            words.append(rng.choice([0xC400, 0xC800, 0xCC00, 0xA800, 0xB000, 0xE5C0, 0xF000, 0xF7FF, 0xFFFF]))
             continue
         op = rng.choice(choices)
         chance = rng.random()
@@ -883,9 +887,35 @@ def random_program(rng, length, ctx1):
                 and rng.random() < 0.5:
             # Few BC=0 jumps run at all, so set BC up for both outcomes rather than leave it to chance
             words.append(encode("BCI", n=0 if rng.random() < 0.5 else rng.randrange(1, 32)))
+        if op == "JMP" and fields["c"] in (COND["F"], COND["NF"]) and rng.random() < 0.5 \
+                and not starts & {pc + 1, pc + 2} and pc + 2 < length - 1:
+            # Missed ticks set M now, not F, so F is rarely 1 and JMP NF was seldom seen not taken. Shifting
+            # a register holding 1 or 2 right sets F to its low bit, for both outcomes
+            r = rng.randrange(4)
+            words += [encode("LDI", r=r, hl=0, v=rng.choice([1, 2])), encode("SHR", r=r)]
+        if op in ("OUT", "IN", "OUTB", "INB", "CRC") and rng.random() < 0.5 and pc + 1 not in starts \
+                and pc + 1 < length - 1:
+            # LANES is one opcode in sixty and its width lasts, so left to chance some widths never shifted
+            words.append(encode("LANES", w=rng.randrange(4)))
+        if op in ("LDP", "JMPR"):
+            # Both take an address from a register, so load one inside the program first: past it the memory
+            # holds whatever an earlier test left there, which the model doesn't know
+            r = fields["s"] & 3
+            fields["s"] = r
+            if pc + 1 in starts or pc + 1 >= length - 1:
+                op, fields = "NOP", {"tick": 0, "side": 0}
+            else:
+                words.append(encode("LDI", r=r, hl=0, v=rng.randrange(1, length - 1)))
         words.append(encode(op, **fields))
     words.append(encode("JMP", c=COND["AL"], to=1))
     return words
+
+
+async def clear_program_memory(dut):
+    """LDP and JMPR can reach any address, and the model's memory past the program is zeros, so make the
+    chip's match. Earlier tests leave their programs behind. The program memory has 512 words."""
+    await stop(dut)
+    await load_program(dut, [0] * 512)
 
 
 def state_differences(dut, model):
@@ -903,6 +933,8 @@ def state_differences(dut, model):
             "tsw": (c.tsrc_want, engine.ts_want[k]), "poly": (c.poly, engine.poly[k]),
             "lastb": (c.lastb, engine.lastb[k]), "M": (c.M, engine.m[k]),
             "since": (c.since, engine.since[k]), "tint": (c.tint, engine.tint[k]),
+            "lanes": (c.lanes.bit_length() - 1, engine.lw[k]),
+            "ldp": (int(c.ldp is not None), engine.ldp_pend[k]),
         }
         for r in range(4):
             pairs[f"R{r}"] = (c.R[r], engine.rr[k * 4 + r])
@@ -1049,6 +1081,7 @@ async def differential_once(dut, seed, cycles, two):
 async def test_rtl_matches_model_one_context(dut):
     """Random programs at full rate: every output pin, every cycle."""
     await reset(dut)
+    await clear_program_memory(dut)
     runs, cycles = (3, 300) if GATE_LEVEL else (40, 800)
     for seed in range(runs):
         await differential_once(dut, 1000 + seed, cycles, False)
@@ -1058,6 +1091,7 @@ async def test_rtl_matches_model_one_context(dut):
 async def test_rtl_matches_model_two_contexts(dut):
     """The same at half rate, with both contexts running their own code."""
     await reset(dut)
+    await clear_program_memory(dut)
     runs, cycles = (3, 300) if GATE_LEVEL else (40, 800)
     for seed in range(runs):
         await differential_once(dut, 2000 + seed, cycles, True)
@@ -1078,12 +1112,14 @@ async def test_rtl_matches_model_four_contexts(dut):
 @cocotb.test()
 async def test_differential_covered_every_instruction(dut):
     """Passing means nothing for instructions that never ran, so check that they did."""
-    unused = sorted(op for op in TABLE if op not in COVERAGE and op != "HALT")
+    unused = sorted(op for op in TABLE if op not in COVERAGE and op != "HALT" and op not in MODEL_ONLY)
     bins = [f"JMP.{c}.{r}" for c in COND.values() for r in ("taken", "not") if (c, r) != (0, "not")]
     bins += [f"WAIT.{c}.{r}" for c in WAITC.values() for r in ("met", "timeout")]
     bins += [f"MODE.{s}" for s in SRC.values()] + [f"TPHASE.{m}" for m in PHASE.values()]
     bins += [f"TSRC.{w}" for w in WANT.values()] + ["PUSH.ok", "PUSH.full"]
     bins += [f"{op}.t" for op, (_, fields) in TABLE.items() if any(name == "tick" for name, _ in fields)]
+    # LANES: every shift at every width, and CRCW at every width
+    bins += [f"{op}.w{w}" for op in ("OUT", "IN", "OUTB", "INB", "CRCW") for w in (1, 2, 4, 8)]
     missing = sorted(b for b in bins if b not in COVERAGE)
     dut._log.info(f"coverage: {len(bins) - len(missing)}/{len(bins)} bins, {sum(COVERAGE.values())} events")
     if GATE_LEVEL:  # far fewer runs at gate level, so this is only reported

@@ -132,6 +132,33 @@ def test_crc_uses_the_bit_last_shifted_in():
     assert m.ctx[0].R[0] == 0x8000 and m.ctx[0].lastb == 1
 
 
+def _serial_crc(bits, poly=0x1021):
+    crc = 0
+    for b in bits:
+        top = ((crc >> 15) & 1) ^ b
+        crc = ((crc << 1) & 0xFFFF) ^ (poly if top else 0)
+    return crc
+
+
+def test_lanes_shift_four_lines_and_crcw_matches_four_serial_crcs():
+    # explore/isa-lanes-table. SR = 0xB5E1 goes out as nibbles B, 5, E, 1 on lines 4-7, oldest first, and
+    # CRCW on each lane equals a serial CRC of that lane's 4 bits.
+    m = _run("msb 1\nlanes 4\nldi r0, 0x1021\npoly r0\nldi r0, 0\nldi r1, 0\nldi r2, 0\nldi r3, 0\n"
+             "ldi r0, 0xB5E1\nmov sr, r0\nldi r0, 0\nout 4 ns\ncrcw r0, msb, 0\ncrcw r1, msb, 1\n"
+             "crcw r2, msb, 2\ncrcw r3, msb, 3\nhalt", 40)
+    c = m.ctx[0]
+    nibbles = [0xB, 0x5, 0xE, 0x1]
+    for lane in range(4):
+        assert c.R[lane] == _serial_crc([(n >> lane) & 1 for n in nibbles]), lane
+    assert m.eng[4:8] == [1, 1, 0, 1]  # nibble B on lines 4-7, line 4 being bit 0
+
+
+def test_ldp_reads_a_table_and_jmpr_jumps_to_a_register():
+    m = _run("ldi r1, tab\nadd r1, 2\nldp r2, r1\nldi r3, there\njmpr r3\nhalt\nthere: mov sr, r2\npush\nhalt\n"
+             "tab: .word 0x1111, 0x2222, 0xBEEF", 30)
+    assert m.e2h == [0xBEEF]
+
+
 def test_errors_are_rejected():
     for bad in ("set 16, 1", "mode 4, bogus", "jmp nowhere", "outb 4, later\nnop\nlater: nop", "ldi r9, 1",
                 "dly 5000", "bogus 1", "tset 8192", "set 4, 1 side=2"):

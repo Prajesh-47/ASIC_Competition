@@ -71,7 +71,11 @@ module splice_engine #(parameter NCTX = 4) (
   reg [1:0]  ts_want [0:NCTX-1];
   reg [11:0] last    [0:NCTX-1];   // what this context saw at its previous slot, for edge waits
   reg [15:0] poly    [0:NCTX-1];   // CRC polynomial, set by POLY
-  reg        lastb   [0:NCTX-1];   // the bit last shifted by OUT, OUTB, IN or INB, which CRC steps on
+  reg [7:0]  lastb   [0:NCTX-1];   // the lane group last shifted by OUT, OUTB, IN or INB, which CRC steps on
+  reg        ldp_pend[0:NCTX-1];   // LDP: the data word arrives at this context's next slot
+  reg [1:0]  ldp_dst [0:NCTX-1];
+  reg [8:0]  ldp_addr[0:NCTX-1];   // with several contexts it's fetched in the slot before this one's next
+  reg [1:0]  lw      [0:NCTX-1];   // LANES: OUT, IN, OUTB and INB move 1 << lw lines at once
 
   reg        prim;            // first cycle of a run: only fetches
   localparam CW = NCTX > 2 ? 2 : 1;
@@ -156,6 +160,9 @@ module splice_engine #(parameter NCTX = 4) (
   wire is_crc    = ins[15:8] == 8'b11101001;
   wire is_cmpu   = ins[15:8] == 8'b11101010;
   wire is_tcap   = ins[15:8] == 8'b11101011;
+  wire is_ldp    = ins[15:8] == 8'b11101101;
+  wire is_jmpr   = ins[15:8] == 8'b11101110;
+  wire is_lanes  = ins[15:8] == 8'b11101111;
   wire is_rand   = ins[15:6] == 10'b1110010100;
   wire is_shl    = ins[15:6] == 10'b1110010101;
   wire is_shr    = ins[15:6] == 10'b1110010110;
@@ -208,10 +215,45 @@ module splice_engine #(parameter NCTX = 4) (
   wire [15:0] opnd_cmp = operand(ins[7:5], r0_c, r1_c, r2_c, r3_c, sr_c, bc_c, to_c);  // CMP a, TSETR, POLY
 
   wire        sbit = msb[c] ? sr[c][15] : sr[c][0];
-  wire [15:0] sr_shifted_out = msb[c] ? {sr[c][14:0], 1'b0} : {1'b0, sr[c][15:1]};
-  wire        in_bit = lines[ln_a];
-  wire [15:0] sr_shifted_in = msb[c] ? {sr[c][14:0], in_bit} : {in_bit, sr[c][15:1]};
+  // Lanes: a group of W = 1 << lw lines from the lane-aligned base ln_a, line base + k being bit k
+  wire [1:0]  lw_c = lw[c];
+  wire        msb_c = msb[c];
+  reg  [7:0]  grp_out, grp_in;
+  reg  [15:0] sr_shifted_out, sr_shifted_in;
+  always @* begin
+    case (lw_c)
+      2'd0: begin
+        grp_out = {7'd0, msb_c ? sr_c[15] : sr_c[0]};
+        grp_in = {7'd0, lines[ln_a]};
+        sr_shifted_out = msb_c ? {sr_c[14:0], 1'b0} : {1'b0, sr_c[15:1]};
+        sr_shifted_in = msb_c ? {sr_c[14:0], grp_in[0]} : {grp_in[0], sr_c[15:1]};
+      end
+      2'd1: begin
+        grp_out = {6'd0, msb_c ? sr_c[15:14] : sr_c[1:0]};
+        grp_in = {6'd0, lines[{ln_a[3:1], 1'b0} +: 2]};
+        sr_shifted_out = msb_c ? {sr_c[13:0], 2'd0} : {2'd0, sr_c[15:2]};
+        sr_shifted_in = msb_c ? {sr_c[13:0], grp_in[1:0]} : {grp_in[1:0], sr_c[15:2]};
+      end
+      2'd2: begin
+        grp_out = {4'd0, msb_c ? sr_c[15:12] : sr_c[3:0]};
+        grp_in = {4'd0, lines[{ln_a[3:2], 2'b00} +: 4]};
+        sr_shifted_out = msb_c ? {sr_c[11:0], 4'd0} : {4'd0, sr_c[15:4]};
+        sr_shifted_in = msb_c ? {sr_c[11:0], grp_in[3:0]} : {grp_in[3:0], sr_c[15:4]};
+      end
+      default: begin
+        grp_out = msb_c ? sr_c[15:8] : sr_c[7:0];
+        grp_in = ln_a[3] ? lines[15:8] : lines[7:0];
+        sr_shifted_out = msb_c ? {sr_c[7:0], 8'd0} : {8'd0, sr_c[15:8]};
+        sr_shifted_in = msb_c ? {sr_c[7:0], grp_in} : {grp_in, sr_c[15:8]};
+      end
+    endcase
+  end
   wire [4:0]  bc_dec = (bc[c] == 0) ? 5'd0 : bc[c] - 5'd1;
+
+  // FIFO view of the current context. The top level routes it to the host FIFOs or a link
+  wire        in_empty = h2e_empty;
+  wire [15:0] in_head = h2e_head;
+  wire        out_full = e2h_full;
 
   // ------------------------------------------------------------------ Execute conditions
   wire slot = running && !prim;
@@ -239,7 +281,7 @@ module splice_engine #(parameter NCTX = 4) (
 
   wire blocked = wait_block
               || (is_waitt && !pend_eff)
-              || (is_pullw && h2e_empty);
+              || (is_pullw && in_empty);
   wire ex = active && !blocked;
 
   // Next PC. The critical path: read data to the program memory address.
@@ -276,27 +318,37 @@ module splice_engine #(parameter NCTX = 4) (
   wire [8:0] pc_taken = to_target ? ins[8:0]
                       : is_call   ? ins[11:3]
                       : is_ret    ? lr[c]
+                      : is_jmpr   ? opnd_cmp[8:0]
                       : to_back   ? pc_back
                       :             pc_inc;
   wire [8:0] pc_next = ex ? pc_taken : pc[c];
 
-  // With more than one context the next slot is another context's, and its PC is already settled.
-  assign fetch_addr = prim ? pc[0] : (nctx_m1 != 0 ? pc[cur_nx] : pc_next);
+  // With more than one context the next slot is another context's, and its PC is already settled. LDP reads
+  // its word in place of an instruction fetch: straight away with one context, and with several in the slot
+  // before the LDP context's next, which would otherwise fetch that context's next instruction.
+  wire [8:0] ldp_src = rr[{c, ins[5:4]}][8:0];
+  assign fetch_addr = prim ? pc[0]
+                    : nctx_m1 != 0 ? (ldp_pend[cur_nx] ? ldp_addr[cur_nx] : pc[cur_nx])
+                    : (ex && is_ldp) ? ldp_src : pc_next;
 
   // ------------------------------------------------------------------ Lines
+  integer l;
   always @* begin
     eng_nx = eng;
     src_nx = src;
     if (active && side[1] && side_ln[c] < 4'd12) eng_nx[side_ln[c][3:0]] = side[0];
     if (ex) begin
       if (is_set && ln_a < 4'd12) eng_nx[ln_a] = ins[6];
-      if ((is_out || is_outb) && ln_a < 4'd12) eng_nx[ln_a] = sbit;
+      if (is_out || is_outb)
+        for (l = 0; l < 12; l = l + 1)
+          if ((l >> lw_c) == (ln_a >> lw_c)) eng_nx[l] = grp_out[l[2:0] & ((3'd1 << lw_c) - 3'd1)];
       if (is_mode) src_nx[3 * ins[10:8] +: 3] = ins[7:5];
     end
   end
 
   // ------------------------------------------------------------------ FIFOs
-  assign h2e_pop = ex && (is_pullw || (is_pull && !h2e_empty));
+  wire   take_in = ex && (is_pullw || (is_pull && !in_empty));
+  assign h2e_pop = take_in;
   assign e2h_push = ex && is_push;
   assign e2h_data = sr[c];
   assign cap_on = ex && is_capon;
@@ -313,9 +365,30 @@ module splice_engine #(parameter NCTX = 4) (
   wire [15:0] alu_and = rr[{c, rn_alu}] & opnd_alu;
   wire [15:0] alu_addr = rr[{c, rn_alu}] + opnd_alu;
   // CRC step on the last shifted bit: left with a left-aligned polynomial, or right with a reflected one
+  // CRC r, dir, lane: one step on bit `lane` of the last group. CRCW (ins[4]): one lane's bits in SR, oldest
+  // first, 4 steps at stride 4, or 2 at stride 8 with 8 lanes.
   wire [15:0] crc_reg  = rr[{c, rn_alu}];
-  wire        crc_fb   = (ins[5] ? crc_reg[15] : crc_reg[0]) ^ lastb[c];
-  wire [15:0] alu_crc  = (ins[5] ? {crc_reg[14:0], 1'b0} : {1'b0, crc_reg[15:1]}) ^ ({16{crc_fb}} & poly[c]);
+  wire        crc_dir  = ins[5];
+  wire [2:0]  crc_lane = ins[3:1];
+  wire        crc_wide = lw_c == 2'd3;
+  wire [31:0] sr_pad   = {16'd0, sr_c};
+  function automatic [15:0] crc_step(input [15:0] v, input b, input dir, input [15:0] p);
+    crc_step = (dir ? {v[14:0], 1'b0} : {1'b0, v[15:1]}) ^ ({16{(dir ? v[15] : v[0]) ^ b}} & p);
+  endfunction
+  reg [3:0] crc_bits;   // oldest first, in the order the steps take them
+  always @* begin
+    if (crc_wide)
+      crc_bits = msb_c ? {sr_pad[8 + crc_lane], sr_pad[crc_lane], 2'b00} : {sr_pad[crc_lane], sr_pad[8 + crc_lane], 2'b00};
+    else
+      crc_bits = msb_c ? {sr_pad[12 + crc_lane], sr_pad[8 + crc_lane], sr_pad[4 + crc_lane], sr_pad[crc_lane]}
+                       : {sr_pad[crc_lane], sr_pad[4 + crc_lane], sr_pad[8 + crc_lane], sr_pad[12 + crc_lane]};
+  end
+  wire [15:0] poly_c   = poly[c];
+  wire [7:0]  lastb_c  = lastb[c];
+  wire [15:0] crc_s1   = crc_step(crc_reg, ins[4] ? crc_bits[3] : lastb_c[crc_lane], crc_dir, poly_c);
+  wire [15:0] crc_s2   = crc_step(crc_s1, crc_bits[2], crc_dir, poly_c);
+  wire [15:0] crc_s4   = crc_step(crc_step(crc_s2, crc_bits[1], crc_dir, poly_c), crc_bits[0], crc_dir, poly_c);
+  wire [15:0] alu_crc  = !ins[4] ? crc_s1 : crc_wide ? crc_s2 : crc_s4;
   wire [15:0] lfsr_nx = {1'b0, lfsr[c][15:1]} ^ (lfsr[c][0] ? 16'hB400 : 16'h0000);
   wire [15:0] mov_val = opnd_mov;
   wire [16:0] phase_half = {2'd0, tp[c][15:1]};
@@ -352,24 +425,24 @@ module splice_engine #(parameter NCTX = 4) (
            || ((is_cmp || is_cmpu) && opnd_cmp == opnd_mov) || (is_cmpi && add_reg == {8'd0, ins[7:0]})
            || (is_tstb && sbit) || (is_probe && lines[ln_p]);
 
-  wire f_we = is_pull || (is_push && e2h_full) || is_shift || is_cmpu;
-  wire f_wd = (is_pull && h2e_empty) || is_push || (is_shr && sft_reg[0]) || (is_shl && sft_reg[15])
+  wire f_we = is_pull || (is_push && out_full) || is_shift || is_cmpu;
+  wire f_wd = (is_pull && in_empty) || is_push || (is_shr && sft_reg[0]) || (is_shl && sft_reg[15])
            || (is_cmpu && opnd_cmp < opnd_mov);
 
   wire sr_out = (is_out && !ins[6]) || is_outb;
   wire sr_in = is_in || is_inb;
-  wire sr_head = (is_pull && !h2e_empty) || is_pullw;
+  wire sr_head = (is_pull && !in_empty) || is_pullw;
   wire mov_sr = is_mov && ins[7:5] == 3'd4;
   wire sr_we = sr_out || sr_in || sr_head || is_sri || mov_sr;
   wire [15:0] sr_wd = ({16{sr_out}} & sr_shifted_out) | ({16{sr_in}} & sr_shifted_in)
-                    | ({16{sr_head}} & h2e_head) | ({16{is_sri}} & ({8'd0, ins[11:4]} << ins[3:0]))
+                    | ({16{sr_head}} & in_head) | ({16{is_sri}} & ({8'd0, ins[11:4]} << ins[3:0]))
                     | ({16{mov_sr}} & mov_val);
 
   wire mov_bc = is_mov && ins[7:5] == 3'd5;
   wire bc_we = sr_out || sr_in || is_pullw || is_bci || mov_bc;
   wire [4:0] bc_wd = ({5{sr_out || sr_in}} & bc_dec) | ({5{is_pullw || is_bci}} & ins[7:3]) | ({5{mov_bc}} & mov_val[4:0]);
 
-  wire [15:0] stall_wd = is_dly ? {4'd0, ins[11:0]} : is_dlyr ? alu_reg : {12'd0, dly_field};
+  wire [15:0] stall_wd = is_dly ? {4'd0, ins[11:0]} : is_dlyr ? alu_reg : is_ldp ? 16'd1 : {12'd0, dly_field};
 
   integer i;
   always @(posedge clk) begin
@@ -407,6 +480,10 @@ module splice_engine #(parameter NCTX = 4) (
         last[i] <= 12'hFFF;
         poly[i] <= 0;
         lastb[i] <= 0;
+        lw[i] <= 0;
+        ldp_pend[i] <= 0;
+        ldp_dst[i] <= 0;
+        ldp_addr[i] <= 0;
       end
       for (i = 1; i < NCTX; i = i + 1) pc[i] <= ctx_pc[9 * i - 9 +: 9];
       for (i = 0; i < 4 * NCTX; i = i + 1) rr[i] <= 0;
@@ -439,6 +516,10 @@ module splice_engine #(parameter NCTX = 4) (
         if (!halted[c]) begin
           if (stall[c] != 0) begin
             stall[c] <= stall[c] - 16'd1;
+            if (ldp_pend[c]) begin
+              rr[{c, ldp_dst[c]}] <= mem_data;
+              ldp_pend[c] <= 1'b0;
+            end
           end else begin
             if (active && tick_q) pending[c] <= 1'b0;
 
@@ -491,8 +572,14 @@ module splice_engine #(parameter NCTX = 4) (
                 pending[c] <= 1'b0;
               end
               if (is_poly) poly[c] <= opnd_cmp;
-              if (is_out || is_outb) lastb[c] <= sbit;
-              if (is_in || is_inb) lastb[c] <= in_bit;
+              if (is_out || is_outb) lastb[c] <= grp_out;
+              if (is_in || is_inb) lastb[c] <= grp_in;
+              if (is_lanes) lw[c] <= ins[7:6];
+              if (is_ldp) begin
+                ldp_pend[c] <= 1'b1;
+                ldp_dst[c] <= ins[7:6];
+                ldp_addr[c] <= ldp_src;
+              end
               if (is_msb) msb[c] <= ins[7];
               if (is_side) side_ln[c] <= ln_p;
               if (is_mov && ins[7:5] == 3'd6) to[c] <= mov_val;

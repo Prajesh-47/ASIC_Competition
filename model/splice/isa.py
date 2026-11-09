@@ -51,10 +51,15 @@ TABLE = {
     "ADDR": ("11100110", (("d", 2), ("s", 3))),
     "TSETR": ("11100111", (("s", 3),)),
     "POLY": ("11101000", (("s", 3),)),
-    "CRC": ("11101001", (("r", 2), ("dir", 1))),
+    "CRC": ("11101001", (("r", 2), ("dir", 1), ("word", 1), ("lane", 3))),
     # Edge-interval capture and an unsigned compare, from explore/scout-edge-timing (lab/explore/scout.md)
     "CMPU": ("11101010", (("a", 3), ("b", 3))),
     "TCAP": ("11101011", (("r", 2), ("tick", 1))),
+    # explore/isa-lanes-int: lane-wide shifts, table reads and a computed jump. 11101100 is free: its
+    # ROUTE mailbox was dropped for the link FIFOs between contexts
+    "LDP": ("11101101", (("d", 2), ("s", 2))),
+    "JMPR": ("11101110", (("s", 3),)),
+    "LANES": ("11101111", (("w", 2),)),
     "RAND": ("1110010100", (("r", 2),)),
     "SHL": ("1110010101", (("r", 2),)),
     "SHR": ("1110010110", (("r", 2),)),
