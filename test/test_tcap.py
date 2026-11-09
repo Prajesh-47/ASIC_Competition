@@ -7,7 +7,7 @@
 import cocotb
 from cocotb.triggers import FallingEdge
 
-from test import UI_IDLE, Splice, firmware, load_program, reset, spi_xfer, start, state_differences, stop
+from test import GATE_LEVEL, UI_IDLE, Splice, firmware, load_program, reset, spi_xfer, start, state_differences, stop
 from test_trial import spdif_receive, spdif_states, spdif_stream, spdif_wave
 
 
@@ -76,7 +76,7 @@ async def test_trial_spdif_is_48k_only(dut):
     assert not await receive(dut, "trial/spdif_rx.s", 44100), "trial firmware shouldn't lock at 44.1 kHz"
 
 
-@cocotb.test()
+@cocotb.test(skip=GATE_LEVEL)  # reads engine registers, which the netlist doesn't name
 async def test_tcap_spdif_lockstep_with_model(dut):
     """RTL and model on the S/PDIF stream, compared every cycle, so a divergence shows where it starts."""
     await reset(dut)
