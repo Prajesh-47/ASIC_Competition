@@ -35,6 +35,11 @@
   "GRT_DESIGN_REPAIR_MAX_WIRE_LENGTH": 200,
   "DESIGN_REPAIR_MAX_WIRE_LENGTH": 200,
 
+  "//": "Cap clock leaf clusters at 7 flops. Without a size, CTS groups sinks by buffer capacitance only,",
+  "//": "and leaves drove 10-17 flops against the buffer's fanout limit of 8: all 76 max-fanout violations",
+  "//": "on main (gds run 42515083991) were clkbuf_leaf_*. 7 leaves room for one dummy load per leaf.",
+  "CTS_SINK_CLUSTERING_SIZE": 7,
+
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
   "//": "The value is in nanoseconds, so 20ns == 50MHz.",
   "CLOCK_PERIOD": 20,
@@ -57,7 +62,8 @@
   "meta": {
     "flow": "Classic",
     "substituting_steps": {
-      "+OpenROAD.GeneratePDN": "Splice.PowerColumns"
+      "+OpenROAD.GeneratePDN": "Splice.PowerColumns",
+      "+Splice.PowerColumns": "Splice.CheckPowerGrid"
     }
   },
   "MACROS": {
