@@ -18,9 +18,10 @@ RESERVED = {
     "(reserved) CODE": (6, {"mode": 4, "n": 3, "pair": 3}),
     "(reserved) CODE2": (6, {"mode": 4, "n": 3, "pair": 3}),
     "(reserved) CRCSR": (8, {"inv": 1, "keep": 1, "shift": 1}),
-    "(reserved) ARM": (5, {"rule": 1, "trig": 3, "c": 1, "line": 3, "src": 3}),
-    "(reserved) MATCH": (5, {"rule": 1, "trig": 3, "line": 3, "src": 4}),
 }
+# Match reflex (lab/explore/match-reflex.md), built in the two codes reserved for match rules, so nothing moved
+TABLE["ARM"] = (5, {"when": 2, "once": 1, "trig": 1, "line": 3, "src": 3})
+TABLE["MATCH"] = (5, {"v": 2, "m": 2, "pe": 1, "pos": 5})
 ALL = {**TABLE, **RESERVED}
 
 # Added after v1, pinned in free codes. Assigning them canonically would renumber every 8-bit opcode.
@@ -33,7 +34,7 @@ EXTENSIONS = {
 
 # Listed in the order the map should read: frequent, wide formats first.
 ORDER = ["TSET", "JMP", "CALL", "DLY", "LDI", "SRI", "SET", "MODE", "OUT", "IN", "OUTB", "INB", "DJNZ",
-         "(reserved) ARM", "(reserved) MATCH", "WAIT", "ADD", "CMPI", "(reserved) CODE", "(reserved) CODE2"]
+         "ARM", "MATCH", "WAIT", "ADD", "CMPI", "(reserved) CODE", "(reserved) CODE2"]
 
 
 def assign():

@@ -21,7 +21,7 @@ import operator
 import re
 import sys
 
-from .isa import COND, CRCDIR, OPERAND, PHASE, SRC, TABLE, WAITC, WANT, encode
+from .isa import COND, CRCDIR, OPERAND, PHASE, SRC, TABLE, WAITC, WANT, WHEN, encode
 
 
 class AsmError(Exception):
@@ -127,6 +127,14 @@ def _translate(mnemonic, args, flags, named, names, labels, pc, final):
         return [(op, {"line": num(args[0]), "v": num(args[1]), "tick": tick, "side": side(), "dly": dly})]
     if op == "MODE":
         return [(op, {"line": num(args[0]), "src": key(SRC, args[1]), "tick": tick, "dly": dly})]
+    if op == "ARM":  # arm LINE, SRC, now|tick|pulse [once] [trig]   or   arm off
+        if args[0].upper() == "OFF":
+            return [(op, {"when": WHEN["OFF"]})]
+        return [(op, {"when": key(WHEN, args[2]), "once": 1 if "once" in flags else 0,
+                      "trig": 1 if "trig" in flags else 0, "line": num(args[0]), "src": key(SRC, args[1])})]
+    if op == "MATCH":  # match rV, rM [pos=N]: hit when (SR & rM) == (rV & rM), and BC == N if pos= is given
+        pos = num(named["pos"]) if "pos" in named else 0
+        return [(op, {"v": reg(args[0]), "m": reg(args[1]), "pe": 1 if "pos" in named else 0, "pos": pos})]
     if op == "OUT":
         return [(op, {"line": num(args[0]), "ns": 1 if "ns" in flags else 0, "tick": tick, "side": side(), "dly": dly})]
     if op == "IN":
@@ -205,7 +213,7 @@ def _parse(line):
     for k, v in tail:
         named[k] = v
     rest = re.sub(r"\w+=[^\s,]+", "", rest)
-    for word in ("ns", "stamp"):
+    for word in ("ns", "stamp", "once", "trig"):
         if re.search(rf"\b{word}\b", rest):
             flags[word] = True
             rest = re.sub(rf"\b{word}\b", "", rest)

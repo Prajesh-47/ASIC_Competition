@@ -33,6 +33,12 @@ class Context:
         self.poly = 0
         self.lastb = 0  # the bit most recently shifted by OUT, OUTB, IN or INB, for CRC
         self.last = [1] * 12
+        # Match reflex (MATCH sets the compare, ARM the action). See lab/explore/match-reflex.md
+        self.mv = self.mm = 0
+        self.mpe, self.mpos = False, 0
+        self.armed, self.when, self.once, self.mtrig = False, 3, False, False
+        self.mline, self.msrc = 0, 0
+        self.mstate, self.msaved, self.rline = "idle", 0, 0  # idle, set (next tick), pulse (next tick), restore
 
 
 class Splice:
@@ -161,6 +167,8 @@ class Splice:
         self.cap_host_cmd = [False, False, False]
         for c in self.ctx:
             self.timer(c)
+            if c.half_now and self.running:
+                self.reflex_edge(c)
         if self.running:
             if self.prim:
                 self.prim = False
@@ -217,7 +225,7 @@ class Splice:
         return {"uo": uo, "out": sum(v << i for i, v in enumerate(self.out)), "oe": sum(v << i for i, v in enumerate(self.oe))}
 
     def timer(self, c):
-        c.tick_now = False
+        c.tick_now = c.half_now = False
         if c.tsrc_want != 3:
             bit, was = self.line(c.tsrc_line), self.prev[c.tsrc_line] if c.tsrc_line < 12 else 1
             c.tick_now = bit != was and (c.tsrc_want == 2 or bit == c.tsrc_want)
@@ -227,9 +235,40 @@ class Splice:
                 c.tick_now = True
             else:
                 c.tcnt -= 1
+                c.half_now = c.tcnt == (c.tp >> 1)  # half a period from the tick: a bit boundary for mid-bit sampling
+        if c.tsrc_want != 3:
+            c.half_now = c.tick_now  # with edge ticks there is no period, so the reflex uses the edge itself
         c.missed = c.tick_now and c.pending
         if c.tick_now:
             c.pending = True
+
+    def reflex_edge(self, c):
+        """A deferred reflex lands on the context's half-period point (or edge tick), before any instruction runs."""
+        if c.mstate == "set":
+            self.src[c.mline], c.mstate = c.msrc, "idle"
+            self.cover("REFLEX.half")
+        elif c.mstate == "pulse":
+            c.rline, c.msaved = c.mline, self.src[c.mline]
+            self.src[c.mline], c.mstate = c.msrc, "restore"
+            self.cover("REFLEX.pulse")
+        elif c.mstate == "restore":
+            self.src[c.rline], c.mstate = c.msaved, "idle"
+
+    def reflex_hit(self, c):
+        """Called after every shift into SR. On a hit the line switches on this same edge, or is queued for the next half-period point."""
+        if not c.armed or c.mstate != "idle" or (c.SR & c.mm) != (c.mv & c.mm):
+            return
+        if c.mpe and c.BC != c.mpos:
+            return
+        if c.when == 0:
+            self.src[c.mline] = c.msrc
+            self.cover("REFLEX.now")
+        else:
+            c.mstate = "set" if c.when == 1 else "pulse"
+        if c.mtrig:
+            self.trig = 1
+        if c.once:
+            c.armed = False
 
     def line(self, n):
         return self.s2[n] if n < 12 else 1
@@ -248,6 +287,7 @@ class Splice:
     def shift_in(self, c, bit):
         c.SR = ((c.SR << 1) | bit) & MASK if c.msb else (c.SR >> 1) | (bit << 15)
         c.BC = max(c.BC - 1, 0)
+        self.reflex_hit(c)
 
     def read(self, c, code):
         if code < 4:
@@ -275,6 +315,15 @@ class Splice:
             self.drive(f["line"], f["v"])
         elif op == "MODE":
             self.src[f["line"]] = f["src"]
+        elif op == "MATCH":
+            c.mv, c.mm = c.R[f["v"]], c.R[f["m"]]
+            c.mpe, c.mpos = bool(f["pe"]), f["pos"]
+        elif op == "ARM":  # cancels a queued switch; a pulse already on the line still ends on its tick
+            c.when, c.once, c.mtrig = f["when"], bool(f["once"]), bool(f["trig"])
+            c.mline, c.msrc = f["line"], f["src"]
+            c.armed = f["when"] != 3
+            if c.mstate != "restore":
+                c.mstate = "idle"
         elif op == "OUT":
             c.lastb = self.sbit(c)
             self.drive(f["line"], c.lastb)

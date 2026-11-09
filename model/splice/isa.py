@@ -20,6 +20,9 @@ TABLE = {
     "OUTB": ("10010", (("line", 4), ("tick", 1), ("side", 2), ("rel", 4))),
     "INB": ("10011", (("line", 4), ("tick", 1), ("side", 2), ("rel", 4))),
     "DJNZ": ("10100", (("r", 2), ("to", 9))),
+    # Match reflex, in the codes reserved for it: compare SR on each shift-in, switch a line's source on a hit
+    "ARM": ("10101", (("when", 2), ("once", 1), ("trig", 1), ("line", 3), ("src", 3))),
+    "MATCH": ("10110", (("v", 2), ("m", 2), ("pe", 1), ("pos", 5))),
     "WAIT": ("101110", (("line", 4), ("c", 2), ("stamp", 1))),
     "ADD": ("101111", (("r", 2), ("v", 8))),
     "CMPI": ("110000", (("a", 2), ("v", 8))),
@@ -62,6 +65,7 @@ WAITC = {"LO": 0, "HI": 1, "RISE": 2, "FALL": 3}
 WANT = {"FALL": 0, "RISE": 1, "BOTH": 2, "OFF": 3}
 PHASE = {"PERIOD": 0, "HALF": 1, "THREEHALF": 2, "R1": 3}
 CRCDIR = {"LSB": 0, "MSB": 1}  # LSB: shift right, reflected polynomial. MSB: shift left, left-aligned polynomial
+WHEN = {"NOW": 0, "HALF": 1, "PULSE": 2, "OFF": 3}  # ARM: on the hit, at the next half-period point, or a one-period pulse
 SRC = {"HIZ": 0, "ENG": 1, "PASS": 2, "INV": 3, "F0": 4, "F1": 5, "ODB": 6}
 # 3-bit register operand. As a MOV destination, 7 seeds the LFSR; as a source it is SR >> 8.
 OPERAND = {"R0": 0, "R1": 1, "R2": 2, "R3": 3, "SR": 4, "BC": 5, "TO": 6, "LOW": 7, "SEED": 7}
