@@ -189,3 +189,53 @@ async def test_link_full_sets_f_and_drops(dut):
     assert words == [1, 2, 3, 4], f"crossed the link: {words}"
     assert (await status(dut)) & 0x10, "a fifth word crossed"
     await clear_contexts(dut)
+
+
+@cocotb.test()
+async def test_three_stage_pipeline_through_both_links(dut):
+    """Context 0 makes 8 words, context 1 adds 0x100 to each and passes it on through link 0 and link 1,
+    and context 2 hands them to the host. All 8 arrive in order, with the host reading as they come. A link
+    that never pops survived the random differential test; this catches it."""
+    await reset(dut)
+    prog = assemble("""
+        ldi r0, 0
+        ldi r1, 8
+    gen: add r0, 1
+        mov sr, r0
+    retry: push
+        jmp f, full
+        djnz r1, gen
+        halt
+    full: ldi r2, 0
+        shr r2          ; PUSH only ever sets F, so clear it with a shift of 0 before retrying
+        jmp retry
+    mid: pullw 16
+        ldi r2, 0
+        mov r0, sr
+        ldi r1, 0x100
+        add r0, r1
+        mov sr, r0
+    mretry: push
+        jmp nf, mid
+        shr r2
+        jmp mretry
+    out: ldi r2, 0
+        pullw 16
+    oretry: push
+        jmp nf, out
+        shr r2          ; a full host FIFO dropped it: clear F and push again
+        jmp oretry
+    .ctx1 mid
+    .ctx2 out
+    """)
+    await load_program(dut, prog.words)
+    # context 0 PUSH to link 0; context 1 PULL from link 0, PUSH to link 1; context 2 PULL from link 1
+    await set_contexts(dut, prog, 3, pull_sel=(1 << 2) | (2 << 4), push_sel=1 | (2 << 2))
+    await start(dut)
+    got = []
+    for _ in range(40):
+        await ClockCycles(dut.clk, 100)
+        while not (await status(dut)) & 0x10 and len(got) < 8:
+            got += await fifo_read(dut, 1)
+    assert got == [0x100 + k for k in range(1, 9)], f"host got {[hex(w) for w in got]}"
+    await clear_contexts(dut)
