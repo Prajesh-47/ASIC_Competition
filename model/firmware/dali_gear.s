@@ -12,8 +12,7 @@
         msb     1
         set     L, 1
         mode    L, eng
-next:   tset    0
-        ldi     r1, 0
+next:   ldi     r1, 0
         mov     to, r1
         wait    L, fall
         ldi     r1, TE*5/4
@@ -27,7 +26,7 @@ next:   tset    0
 rbit:   dlyr    r1
         in      L
         probe   L
-        jmp     z, rf
+        jmp     hi, rf
         wait    L, rise
         jmp     f, bad
         jmp     rn
@@ -36,7 +35,7 @@ rf:     wait    L, fall
 rn:     jmp     bcn, rbit
         dlyr    r1
         probe   L
-        jmp     nz, bad
+        jmp     lo, bad
         ldi     r1, TE*2
         mov     to, r1
         wait    L, fall

@@ -18,6 +18,7 @@ class Context:
         self.pc = pc
         self.R = [0, 0, 0, 0]
         self.SR = self.BC = self.TO = self.Z = self.F = 0
+        self.M = 0  # missed tick, until JMP M reads it
         self.stall = 0
         self.to_left = None
         self.halted = False
@@ -171,9 +172,9 @@ class Splice:
                 self.exec_slot(c)
                 if self.two:
                     self.cur ^= 1
-        for c in self.ctx:  # a missed tick shows next cycle and beats an instruction writing F
+        for c in self.ctx:  # a missed tick shows next cycle and beats JMP M clearing it
             if c.missed:
-                c.F = 1
+                c.M = 1
         self.capture_step(*self.cap_cmd)
         self.run_bridges()
         for x in range(8):
@@ -409,7 +410,9 @@ class Splice:
         elif op == "PROBE":
             c.Z = self.line(f["line"])
         elif op == "JMP":
-            taken = {0: True, 1: c.Z == 1, 2: c.Z == 0, 3: c.F == 1, 4: c.F == 0, 5: c.BC == 0, 6: c.BC != 0, 7: False}[f["c"]]
+            taken = {0: True, 1: c.Z == 1, 2: c.Z == 0, 3: c.F == 1, 4: c.F == 0, 5: c.BC == 0, 6: c.BC != 0, 7: c.M == 1}[f["c"]]
+            if f["c"] == 7:
+                c.M = 0
             self.cover(f"JMP.{f['c']}.{'taken' if taken else 'not'}")
             if taken:
                 next_pc = f["to"]

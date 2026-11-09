@@ -15,8 +15,7 @@
         msb     1
         set     L, 1
         mode    L, eng
-next:   tset    0             ; a running timer nobody consumes would keep setting F
-        ldi     r1, 0
+next:   ldi     r1, 0         ; the timer can keep running: a missed tick sets M, not F
         mov     to, r1
         pullw   16
         mov     r0, sr
@@ -48,8 +47,7 @@ stop:   set.t   L, 1          ; two stop bits, idle
 s1:     nop.t
         djnz    r2, s1
 
-        tset    0             ; the reply must start within 22 Te. A WAIT timeout is 16 bits, so loop
-        ldi     r1, 60000
+        ldi     r1, 60000     ; the reply must start within 22 Te. A WAIT timeout is 16 bits, so loop
         mov     to, r1
         ldi     r2, 8
 rw:     ldi     r3, 0
@@ -73,7 +71,7 @@ got:    ldi     r1, TE*5/4    ; every bit has an edge in its middle, so a missin
 rbit:   dlyr    r1            ; from one middle to the first half of the next bit
         in      L             ; first half low means 1, so SR holds the complement
         probe   L
-        jmp     z, rf
+        jmp     hi, rf
         wait    L, rise
         jmp     f, bad
         jmp     rn
@@ -82,7 +80,7 @@ rf:     wait    L, fall
 rn:     jmp     bcn, rbit
         dlyr    r1            ; must be idle from here: another edge means too many bits
         probe   L
-        jmp     nz, bad
+        jmp     lo, bad
         ldi     r1, TE*2
         mov     to, r1
         wait    L, fall
@@ -104,7 +102,7 @@ bad:    sri     3, 8
 ; the end of the half.
 high:   dlyr    r1
         probe   L             ; if it's low, someone else is driving
-        jmp     nz, coll
+        jmp     lo, coll
         ret
 coll:   set     L, 1
         sri     4, 8
@@ -114,6 +112,6 @@ coll:   set     L, 1
         tset    TE/3          ; check the idle bus every third of a Te, as finely as before
 back:   ldi     r2, 66        ; 22 Te of idle bus before trying again
 b1:     probe.t L
-        jmp     nz, back
+        jmp     lo, back
         djnz    r2, b1
         jmp     send

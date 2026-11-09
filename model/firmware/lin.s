@@ -20,7 +20,7 @@ hunt:   wait    L, lo
         ldi     r2, 11        ; a break is at least 11 bits, and usually 13. Reject anything shorter
         tset    NOMINAL*9/10
 brk:    probe.t L
-        jmp     z, hunt
+        jmp     hi, hunt
         djnz    r2, brk
         wait    L, hi
         wait    L, lo         ; the sync byte's start bit
@@ -29,11 +29,11 @@ brk:    probe.t L
 low:    add     r0, 1
         dly     4
         probe   L
-        jmp     nz, low
+        jmp     lo, low
 high1:  add     r0, 1
         dly     4
         probe   L
-        jmp     z, high1
+        jmp     hi, high1
         djnz    r1, low
         wait    L, hi
 

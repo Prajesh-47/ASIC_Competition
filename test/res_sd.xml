@@ -1,0 +1,103 @@
+<testsuites name="results">
+  <testsuite name="all" package="all">
+    <property name="random_seed" value="1794225513" />
+    <testcase name="test_dali_forward_frame_and_yes" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="140" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_dali_no_reply_means_no" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="160" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_dali_backward_at_rate_limits" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="170" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_dali_malformed_backward_rejected" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="183" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_dali_collision_detected_and_retried" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="195" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_dali_gear_addressing_and_reply" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="226" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_hdlc_known_answer_transmit" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="395" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_hdlc_transmit_stuffing_and_shared_flag" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="412" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_hdlc_receive" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="429" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_hdlc_receive_rejects_bad_frames" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="444" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_hdlc_full_duplex" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="468" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_hdlc_sustained_one_direction" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="506" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_hdlc_sustained_full_duplex" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="513" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_spdif_receive_decodes_two_frames_worth" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="649" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_spdif_receive_block_of_192_frames" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="663" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_spdif_receive_polarity_inverted" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="682" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_spdif_receive_clock_drift" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="694" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_spdif_receive_flags_parity_and_preamble_errors" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="710" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_spdif_transmit_known_preambles_and_block" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="805" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_sd_initialization_and_responses" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="1045" time="21.084922075271606" sim_time_ns="3923320.0" ratio_time="186072.30256740047" />
+    <testcase name="test_sd_read_block_four_bits" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="1085" time="62.96379017829895" sim_time_ns="7520780.0" ratio_time="119446.11305486667" />
+    <testcase name="test_sd_write_block_four_bits" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="1106" time="54.66639518737793" sim_time_ns="8718860.0" ratio_time="159492.13351483474" />
+    <testcase name="test_sd_detects_corruption_and_recovers_from_silence" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="1130" time="79.07224917411804" sim_time_ns="12246860.0" ratio_time="154881.89760521756" />
+    <testcase name="test_sd_dat_line_fault" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="1171" time="84.99721622467041" sim_time_ns="11846460.0" ratio_time="139374.68220943416" />
+    <testcase name="test_eth_transmit_whole_chain_and_fastest_rate" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="1270" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_eth_absolute_pin_limit" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="1295" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_eth_receive_at_125_mbd_cannot_work" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="1322" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_eth_receive_code_groups" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="1388" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_mdio_read_write_and_absent_phy" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="1465" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_lin_receive_with_auto_baud_and_checksum" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="1554" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_lin_responds_and_ignores_a_short_break" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="1585" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_lin_new_firmware_far_above_lin_rates" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="1609" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_sent_transmit_frame" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="1639" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_cec_initiator_frame_and_ack" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="1702" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_cec_arbitration_lost" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="1747" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+    <testcase name="test_cec_follower_receives_and_acks" classname="test_trial" file="/home/prajesh/projects/JS_fprobe/test/test_trial.py" lineno="1767" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
+  </testsuite>
+</testsuites>

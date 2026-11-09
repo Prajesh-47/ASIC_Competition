@@ -57,7 +57,9 @@ TABLE = {
     "SHR": ("1110010110", (("r", 2),)),
 }
 
-COND = {"AL": 0, "Z": 1, "NZ": 2, "F": 3, "NF": 4, "BC0": 5, "BCN": 6}
+COND = {"AL": 0, "Z": 1, "NZ": 2, "F": 3, "NF": 4, "BC0": 5, "BCN": 6, "M": 7}
+# After PROBE, Z is set when the line is high. These say so, where `jmp z` read as "line is zero".
+COND_ALIAS = {"HI": "Z", "LO": "NZ"}
 WAITC = {"LO": 0, "HI": 1, "RISE": 2, "FALL": 3}
 WANT = {"FALL": 0, "RISE": 1, "BOTH": 2, "OFF": 3}
 PHASE = {"PERIOD": 0, "HALF": 1, "THREEHALF": 2, "R1": 3}

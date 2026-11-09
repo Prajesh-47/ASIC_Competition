@@ -56,6 +56,7 @@ module splice_engine (
   reg [15:0] stall   [0:1];
   reg        z       [0:1];
   reg        f       [0:1];
+  reg        m       [0:1];   // a tick fired while the last was still pending, until JMP M reads it
   reg        msb     [0:1];
   reg [3:0]  side_ln [0:1];
   reg [15:0] lfsr    [0:1];
@@ -240,7 +241,7 @@ module splice_engine (
       3'd4: take_jmp = !f[c];
       3'd5: take_jmp = bc[c] == 0;
       3'd6: take_jmp = bc[c] != 0;
-      default: take_jmp = 1'b0;
+      default: take_jmp = m[c];
     endcase
   end
   wire [15:0] djnz_dec = rr[{c, rn_djnz}] - 16'd1;
@@ -374,6 +375,7 @@ module splice_engine (
         stall[i] <= 0;
         z[i] <= 0;
         f[i] <= 0;
+        m[i] <= 0;
         msb[i] <= 0;
         side_ln[i] <= 4'd15;
         lfsr[i] <= 16'hACE1;
@@ -472,15 +474,17 @@ module splice_engine (
               if (is_irq) irq <= 1'b1;
               if (is_trig) trig <= 1'b1;
               if (is_halt) halted[c] <= 1'b1;
+              if (is_jmp && ins[11:9] == 3'd7) m[c] <= 1'b0;  // JMP M reads and clears
             end
           end
         end
       end
 
-      // A missed tick is visible next cycle and beats any instruction writing F, so a deadline
-      // miss can never be silently lost. This must stay after the instruction logic.
+      // A missed tick sets M, not F, so a timer left running can't pass for a full FIFO or a timeout.
+      // It is visible next cycle and beats JMP M clearing it, so a deadline miss can never be silently
+      // lost. This must stay after the instruction logic.
       for (i = 0; i < 2; i = i + 1)
-        if (tick_now[i] && pending[i]) f[i] <= 1'b1;
+        if (tick_now[i] && pending[i]) m[i] <= 1'b1;
     end
   end
 endmodule

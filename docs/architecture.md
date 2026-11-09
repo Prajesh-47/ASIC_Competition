@@ -119,10 +119,10 @@ Per-pair FSM: `IDLE → A_HOLDS` (A low first: drive B low) / `B_HOLDS` (mirror)
 - **Taken jumps cost nothing extra.** The macro's read data is decoded in the same cycle. If this misses timing in RTL, the fallback is a fixed 1-cycle penalty.
 - **Pin effects land on the clock edge ending the instruction's first cycle.** Inputs pass a 2-flop synchronizer, so `IN`, `WAIT` and `PROBE` see a pin 2 cycles late. These latencies are fixed and published.
 - **First instruction runs a fixed 1 cycle after `START`.** The macro holds its output during delays.
-- **Missed tick:** if a tick fires while the last one is still pending, `F` is set, so a late program is visible and doesn't silently produce a wrong waveform. `F` changes on the following cycle, and beats any instruction writing `F` in the same cycle, so a miss can't be lost.
+- **Missed tick:** if a tick fires while the last one is still pending, the context's `M` flag is set, so a late program is visible and doesn't silently produce a wrong waveform. `M` changes on the following cycle and beats `JMP M` clearing it in the same cycle, so a miss can't be lost. `JMP M` reads and clears it. Until the adaptability trial this set `F`, which also means a full FIFO and a WAIT timeout, so a timer left running made both look true and firmware had to stop it first.
 
 ### 5.2 State
-Each context has its own `PC`, `R0`–`R3` (16-bit), `SR` (16-bit), `BC`, `TO`, flags `Z` and `F`, CRC polynomial and last shifted bit, link register, bit timer, tick source, side-set line, bit order and edge memory. Registers are 4 only: CAN and USB use all of them.
+Each context has its own `PC`, `R0`–`R3` (16-bit), `SR` (16-bit), `BC`, `TO`, flags `Z`, `F` and `M`, CRC polynomial and last shifted bit, link register, bit timer, tick source, side-set line, bit order and edge memory. Registers are 4 only: CAN and USB use all of them.
 
 **Scheduling is set at `START`:** one context at full rate, or two contexts at half rate each. Both share the program macro, reading on alternate cycles. The synthesis sketch doesn't duplicate the timer per context, so its 32K µm² estimate is low.
 
@@ -141,7 +141,7 @@ The qualifier `.t` on an instruction means: wait for the next tick, then execute
 | FIFO | `PULLW`, `PULL`, `PUSH` | `PULLW` stalls until data arrives and loads `BC`. `PULL` doesn't stall, and sets `F` when empty |
 | Setup | `BCI`, `SRI`, `MSB`, `SIDE` | `SIDE` picks the line for side-set: a second line changing on the same edge |
 | Data | `LDI`, `MOV`, `ADD`, `ADDR`, `XOR`, `AND`, `CMP`, `CMPI`, `SHR`, `SHL`, `RAND`, `POLY`, `CRC` | `ADDR` adds a register operand, and sets `Z` but not `F`, like `ADD`. `CRC r, msb` or `lsb` is one CRC step on `Rr`, on the bit last shifted by `OUT`, `OUTB`, `IN` or `INB`, with the polynomial `POLY` set: left with a left-aligned polynomial, or right with a reflected one. It sets `Z` but not `F`. Shifts put the bit shifted out in `F`. `RAND` is one LFSR step, for seeded and repeatable fuzzing |
-| Control | `JMP`, `DJNZ`, `CALL`, `RET`, `TSTB`, `NOP`, `HALT` | `CALL` is one level. `TSTB` sets `Z` from the next output bit. `JMP` conditions: always, Z, NZ, F, !F, BC=0, BC≠0, and a spare |
+| Control | `JMP`, `DJNZ`, `CALL`, `RET`, `TSTB`, `NOP`, `HALT` | `CALL` is one level. `TSTB` sets `Z` from the next output bit. `JMP` conditions: always, Z, NZ, F, !F, BC=0, BC≠0, M (missed tick; reads and clears). After `PROBE`, `Z` means the line is high, so the assembler takes `jmp hi` and `jmp lo` for `z` and `nz`, and warns on `z` or `nz` straight after a `PROBE` |
 | Chip | `IRQ`, `TRIG`, `CAPON`, `CAPOFF`, `CAPMARK` | |
 
 **Not yet run by any study program:** `IRQ`, `TRIG`, `CAPON`, `CAPOFF`, `CAPMARK`, `CMP`, `DLYR`, `PULL` and `TPHASE`. The golden model must test these first.
