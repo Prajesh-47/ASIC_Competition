@@ -14,8 +14,9 @@ MASK = 0xFFFF
 
 
 class Context:
-    def __init__(self, pc=0):
+    def __init__(self, pc=0, light=False):
         self.pc = pc
+        self.light = light  # no timeout, LFSR, CRC polynomial or TCAP state of its own
         self.R = [0, 0, 0, 0]
         self.SR = self.BC = self.TO = self.Z = self.F = 0
         self.M = 0  # missed tick, until JMP M reads it
@@ -36,12 +37,21 @@ class Context:
         self.poly = 0
         self.lastb = 0  # the bit most recently shifted by OUT, OUTB, IN or INB, for CRC
         self.last = [1] * 12
+        if light:
+            self.lfsr = 0
+
+    def lighten(self):
+        """A light context's TO, LFSR, polynomial and last shifted bit read as 0, whatever was written."""
+        if self.light:
+            self.TO = self.lfsr = self.poly = self.lastb = 0
+            self.to_left = None
 
 
 class Splice:
     FIFO_DEPTH = 8
     LINK_DEPTH = 4  # the links between contexts
     NCTX = 4  # contexts in hardware. The first `nctx` of them take turns, one slot each
+    NFULL = 2  # contexts 0 to NFULL-1 are full; the rest are light (Context.light)
 
     @property
     def two(self):
@@ -99,7 +109,7 @@ class Splice:
         self.running = False
         self.prim = False
         self.cur = 0
-        self.ctx = [Context() for _ in range(self.NCTX)]
+        self.ctx = [Context(light=k >= self.NFULL) for k in range(self.NCTX)]
         self.links = [[], []]
         self.eng = [1] * 8 + [0] * 4
         self.src = [0] * 8
@@ -167,7 +177,7 @@ class Splice:
         self.e2h = []
         self._clear_run()
         self.cap_clear()
-        self.ctx = [Context(pc) for pc in [0] + self.ctx_pc]
+        self.ctx = [Context(pc, light=k >= self.NFULL) for k, pc in enumerate([0] + self.ctx_pc)]
         self.running, self.prim = True, True
 
     # Host side of the FIFOs
@@ -194,6 +204,7 @@ class Splice:
             else:
                 c = self.ctx[self.cur]
                 self.exec_slot(c)
+                c.lighten()
                 self.cur = (self.cur + 1) % self.nctx
         for c in self.ctx:  # a missed tick shows next cycle and beats JMP M clearing it
             if c.missed:
@@ -251,7 +262,9 @@ class Splice:
                 c.tick_now = True
             else:
                 c.tcnt -= 1
-        if c.tick_now:  # latch the time between this tick and the one before, so firmware can read it late
+        if c.light:  # no TCAP counter: TCAP reads 0xFFFF
+            pass
+        elif c.tick_now:  # latch the time between this tick and the one before, so firmware can read it late
             c.tint, c.since = min(c.since + 1, 0xFFFF), 0
         else:
             c.since = min(c.since + 1, 0xFFFF)

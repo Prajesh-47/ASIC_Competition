@@ -895,17 +895,19 @@ def state_differences(dut, model):
     for k, c in enumerate(model.ctx):
         pairs = {
             "pc": (c.pc, engine.pc[k]), "SR": (c.SR, engine.sr[k]), "BC": (c.BC, engine.bc[k]),
-            "TO": (c.TO, engine.to[k]), "Z": (c.Z, engine.z[k]), "F": (c.F, engine.f[k]),
+            "Z": (c.Z, engine.z[k]), "F": (c.F, engine.f[k]),
             "stall": (c.stall, engine.stall[k]), "pending": (int(c.pending), engine.pending[k]),
             "tcnt": (c.tcnt, engine.tcnt[k]), "tp": (c.tp, engine.tp[k]), "lr": (c.lr, engine.lr[k]),
-            "msb": (int(c.msb), engine.msb[k]), "lfsr": (c.lfsr, engine.lfsr[k]),
+            "msb": (int(c.msb), engine.msb[k]),
             "side": (c.side_line, engine.side_ln[k]), "tsl": (c.tsrc_line, engine.ts_line[k]),
-            "tsw": (c.tsrc_want, engine.ts_want[k]), "poly": (c.poly, engine.poly[k]),
-            "lastb": (c.lastb, engine.lastb[k]), "M": (c.M, engine.m[k]),
-            "since": (c.since, engine.since[k]), "tint": (c.tint, engine.tint[k]),
+            "tsw": (c.tsrc_want, engine.ts_want[k]), "M": (c.M, engine.m[k]),
         }
-        for r in range(4):
-            pairs[f"R{r}"] = (c.R[r], engine.rr[k * 4 + r])
+        if not c.light:  # a light context has no such state in the RTL, and the model holds it at 0
+            pairs.update({"TO": (c.TO, engine.to[k]), "lfsr": (c.lfsr, engine.lfsr[k]),
+                          "poly": (c.poly, engine.poly[k]), "lastb": (c.lastb, engine.lastb[k]),
+                          "since": (c.since, engine.since[k]), "tint": (c.tint, engine.tint[k])})
+        for r in range(4):  # R0-R3 live in latches, splice_latch_rf.v
+            pairs[f"R{r}"] = (c.R[r], engine.rf.mem[k * 4 + r])
         for name, (want, handle) in pairs.items():
             value = int(handle.value)
             if value != want:

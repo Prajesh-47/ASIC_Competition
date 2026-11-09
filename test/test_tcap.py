@@ -44,7 +44,7 @@ async def receive(dut, program, fs, clock=1.0, count=44):
     if os.environ.get("TCAP_DEBUG"):
         e = dut.user_project.engine
         dut._log.info(f"DEBUG end: pc {int(e.pc[0].value)} halted {e.halted.value} running {e.running.value} "
-                      f"R {[int(e.rr[i].value) for i in range(4)]} tint {int(e.tint[0].value)} tsw {int(e.ts_want[0].value)}")
+                      f"R {[int(e.rf.mem[i].value) for i in range(4)]} tint {int(e.tint[0].value)} tsw {int(e.ts_want[0].value)}")
     await stop(dut)
     decode = decode_tcap if "tcap" in program else spdif_decode_words
     if "tcap" in program:

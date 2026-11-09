@@ -21,6 +21,7 @@ project:
     - "tt_um_prajesh47_splice.v"
     - "splice_fifo.v"
     - "splice_engine.v"
+    - "splice_latch_rf.v"
     - "splice_host.v"
     - "splice_bridge.v"
     - "splice_capture.v"
