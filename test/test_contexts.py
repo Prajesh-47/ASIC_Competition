@@ -5,10 +5,12 @@
 # routed to the host or to one of two link FIFOs, so one context's output feeds another's input with no
 # host in between. Only top-level ports are used, so these also run on the gate-level netlist.
 
+import os
+
 import cocotb
 from cocotb.triggers import ClockCycles
 
-from test import assemble, capture, fifo_read, fifo_write, firmware, load_program, read_reg, reset, start, status, stop, write_reg
+from test import HERE, assemble, capture, fifo_read, fifo_write, firmware, load_program, read_reg, reset, start, status, stop, write_reg
 from test_protocols import level
 
 
@@ -118,8 +120,24 @@ async def test_four_protocols_at_once(dut):
     """Four contexts, a quarter rate each: a UART-to-SPI bridge through link 0, UART transmit from the host,
     and a second UART receive to the host, all at the same time, each judged on its own pins."""
     await reset(dut)
+    await four_protocols(dut, firmware("four_protocols.s", BIT=40, HALF=10))
+
+
+@cocotb.test()
+async def test_program_above_word_256(dut):
+    """explore/uarch-prog512: the same four protocols with all their code above word 300, which a 256-word
+    program memory can't hold. Word 0 jumps there. SD alone uses 245 of 256 words on main."""
+    await reset(dut)
+    with open(os.path.join(HERE, "..", "model", "firmware", "four_protocols.s"), encoding="utf-8") as f:
+        source = f.read()
+    pad = "        jmp     high\n" + "        nop\n" * 299 + "high:\n"
+    prog = assemble(pad + source, {"BIT": 40, "HALF": 10})
+    assert len(prog.words) > 320 and min(prog.ctx) >= 300, f"{len(prog.words)} words, starts {prog.ctx}"
+    await four_protocols(dut, prog)
+
+
+async def four_protocols(dut, prog):
     bit, half = 40, 10
-    prog = firmware("four_protocols.s", BIT=bit, HALF=half)
     await load_program(dut, prog.words)
     await set_contexts(dut, prog, 4, pull_sel=1 << 2, push_sel=1)
     bridge, to_host, from_host = [0x55, 0xA3, 0x0F, 0xE1], [0x12, 0xC3, 0x7E, 0x81], [0x4B, 0x00, 0xFF, 0x2D]

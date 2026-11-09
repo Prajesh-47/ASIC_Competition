@@ -6,11 +6,11 @@ SIM ?= icarus
 FST ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = tt_um_prajesh47_splice.v splice_fifo.v splice_engine.v splice_host.v splice_bridge.v splice_capture.v RM_IHPSG13_1P_256x16_c2_bm_bist.v RM_IHPSG13_1P_512x16_c2_bm_bist.v
+PROJECT_SOURCES = tt_um_prajesh47_splice.v splice_fifo.v splice_engine.v splice_host.v splice_bridge.v splice_capture.v RM_IHPSG13_1P_512x16_c2_bm_bist.v
 
 # PDK SRAM models. They replace the synthesis blackboxes in src/ in both RTL and gate-level runs.
 SRAM_MODEL_DIR ?= $(PWD)/models
-SRAM_MODELS = $(SRAM_MODEL_DIR)/RM_IHPSG13_1P_core_behavioral_bm_bist.v $(SRAM_MODEL_DIR)/RM_IHPSG13_1P_256x16_c2_bm_bist.v $(SRAM_MODEL_DIR)/RM_IHPSG13_1P_512x16_c2_bm_bist.v
+SRAM_MODELS = $(SRAM_MODEL_DIR)/RM_IHPSG13_1P_core_behavioral_bm_bist.v $(SRAM_MODEL_DIR)/RM_IHPSG13_1P_512x16_c2_bm_bist.v
 
 ifneq ($(GATES),yes)
 

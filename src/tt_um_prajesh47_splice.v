@@ -330,12 +330,14 @@ module tt_um_prajesh47_splice (
 
   wire [15:0] cap_dout;
 
-  RM_IHPSG13_1P_256x16_c2_bm_bist prog_sram (
+  // Program memory uses the same 512-word macro as capture (explore/uarch-prog512): 512 words, so several
+  // large protocols stay loaded at once and each context can start any of them.
+  RM_IHPSG13_1P_512x16_c2_bm_bist prog_sram (
       .A_CLK      (clk),
       .A_MEN      (running || host_prog),
       .A_WEN      (host_prog && mem_we),
       .A_REN      (running || (host_prog && !mem_we)),
-      .A_ADDR     (running ? fetch_addr[7:0] : mem_addr[7:0]),
+      .A_ADDR     (running ? fetch_addr : mem_addr),
       .A_DIN      (mem_wdata),
       .A_DLY      (1'b1),
       .A_DOUT     (prog_dout),
@@ -345,7 +347,7 @@ module tt_um_prajesh47_splice (
       .A_BIST_MEN (1'b0),
       .A_BIST_WEN (1'b0),
       .A_BIST_REN (1'b0),
-      .A_BIST_ADDR(8'd0),
+      .A_BIST_ADDR(9'd0),
       .A_BIST_DIN (16'd0),
       .A_BIST_BM  (16'd0)
   );
