@@ -1008,19 +1008,23 @@ async def differential_once(dut, seed, cycles, two):
     for op, count in models[0].coverage.items():
         COVERAGE[op] = COVERAGE.get(op, 0) + count
 
-    # Capture results are invisible on the pins, so read them back and compare them too.
-    model = models[0]
+    # Capture results are invisible on the pins, so read them back and compare them too. With two contexts
+    # at gate level, where there's no state check, the pins may never settle the slot order, and the two
+    # orders can record capture a cycle apart. So the result must match one of the models still standing.
+    # Taking the first one failed seed 2002 on a correct netlist, whose capture matched the other order.
     dut.ui_in.value = UI_IDLE
     dut.uio_in.value = 0xFF
     await stop(dut)
     # The STOP command takes many cycles and capture runs until it lands, so the RTL may hold a few more
     # entries. The state check above compared the pointer while both were in step.
     pointer = await capture_pointer(dut)
-    assert pointer >= model.cap_ptr or model.cap_wrapped, f"seed {seed}: capture {pointer}, model {model.cap_ptr}"
-    count = min(model.cap_ptr, 12)
+    models = [m for m in models if pointer >= m.cap_ptr or m.cap_wrapped]
+    assert models, f"seed {seed}: capture pointer {pointer} is behind every model"
+    count = max(min(m.cap_ptr, 12) for m in models)
     if count:
         got = await read_capture(dut, count)
-        assert got == model.cap[:count], f"seed {seed}: capture {got}, model {model.cap[:count]}"
+        fits = [m for m in models if got[:min(m.cap_ptr, 12)] == m.cap[:min(m.cap_ptr, 12)]]
+        assert fits, f"seed {seed}: capture {got}, models {[m.cap[:min(m.cap_ptr, 12)] for m in models]}"
     dut.ui_in.value = UI_IDLE
     dut.uio_in.value = 0xFF
     await ClockCycles(dut.clk, 4)
