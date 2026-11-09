@@ -62,6 +62,8 @@ module splice_engine (
   reg [15:0] lfsr    [0:1];
   reg [15:0] tp      [0:1];   // 16 bits from TSETR; TSET's constant fills the low 13
   reg [16:0] tcnt    [0:1];   // one more, so TPHASE can start one and a half periods
+  reg [15:0] since   [0:1];   // cycles since the last tick, saturating
+  reg [15:0] tint    [0:1];   // cycles between the last two ticks, for TCAP
   reg        pending [0:1];
   reg [3:0]  ts_line [0:1];
   reg [1:0]  ts_want [0:1];
@@ -144,13 +146,15 @@ module splice_engine (
   wire is_tsetr  = ins[15:8] == 8'b11100111;
   wire is_poly   = ins[15:8] == 8'b11101000;
   wire is_crc    = ins[15:8] == 8'b11101001;
+  wire is_cmpu   = ins[15:8] == 8'b11101010;
+  wire is_tcap   = ins[15:8] == 8'b11101011;
   wire is_rand   = ins[15:6] == 10'b1110010100;
   wire is_shl    = ins[15:6] == 10'b1110010101;
   wire is_shr    = ins[15:6] == 10'b1110010110;
 
   wire is_bit = is_outb || is_inb;
   wire tick_q = ((is_set || is_out) && ins[5]) || (is_mode && ins[4]) || ((is_in || is_bit) && ins[6])
-             || (is_nop && ins[7]) || (is_probe && ins[3]);
+             || (is_nop && ins[7]) || (is_probe && ins[3]) || (is_tcap && ins[5]);
   wire [1:0] side = ({2{is_set || is_out}} & ins[4:3]) | ({2{is_in || is_bit}} & ins[5:4])
                   | ({2{is_nop}} & ins[6:5]);
   wire [3:0] dly_field = ({4{is_set || is_out}} & {1'b0, ins[2:0]}) | ({4{is_mode || is_in}} & ins[3:0]);
@@ -310,13 +314,16 @@ module splice_engine (
   // Write ports. Each state element takes one data word selected by AND-OR, rather than one path per
   // instruction, which would give every bit of the register file its own mux tree.
   wire [15:0] ldi_reg = rr[{c, rn_ldi}];
+  // TCAP.t runs on the cycle of its tick, before the latch takes the interval ending there, so pass it on
+  wire [15:0] since_inc = since[c] == 16'hFFFF ? 16'hFFFF : since[c] + 16'd1;
+  wire [15:0] tint_now = tick_now[c] ? since_inc : tint[c];
   wire [15:0] alu_reg = rr[{c, rn_alu}];
   wire [15:0] sft_reg = rr[{c, rn_sft}];
   wire        is_shift = is_shr || is_shl;
   wire        mov_rr = is_mov && !ins[7];
 
-  wire rr_we = ex && (is_ldi || is_add || is_addr || is_crc || is_xor || is_and || is_shift || is_rand || is_djnz || mov_rr);
-  wire [1:0] rr_idx = ({2{is_ldi}} & rn_ldi) | ({2{is_add}} & rn_add) | ({2{is_xor || is_and || is_addr || is_crc}} & rn_alu)
+  wire rr_we = ex && (is_ldi || is_add || is_addr || is_crc || is_xor || is_and || is_shift || is_rand || is_djnz || mov_rr || is_tcap);
+  wire [1:0] rr_idx = ({2{is_ldi}} & rn_ldi) | ({2{is_add}} & rn_add) | ({2{is_xor || is_and || is_addr || is_crc || is_tcap}} & rn_alu)
                     | ({2{is_shift || is_rand}} & rn_sft) | ({2{is_djnz}} & rn_djnz) | ({2{mov_rr}} & ins[6:5]);
   wire [15:0] rr_wd = ({16{is_ldi}} & (ins[9] ? {ins[8:1], ldi_reg[7:0]} : {8'd0, ins[8:1]}))
                     | ({16{is_add}} & alu_add)
@@ -328,15 +335,17 @@ module splice_engine (
                     | ({16{is_shl}} & {sft_reg[14:0], 1'b0})
                     | ({16{is_rand}} & lfsr_nx)
                     | ({16{is_djnz}} & djnz_dec)
-                    | ({16{mov_rr}} & mov_val);
+                    | ({16{mov_rr}} & mov_val)
+                    | ({16{is_tcap}} & tint_now);
 
-  wire z_we = is_add || is_addr || is_crc || is_xor || is_and || is_cmp || is_cmpi || is_tstb || is_probe;
+  wire z_we = is_add || is_addr || is_crc || is_xor || is_and || is_cmp || is_cmpu || is_cmpi || is_tstb || is_probe;
   wire z_wd = (is_add && alu_add == 0) || (is_addr && alu_addr == 0) || (is_crc && alu_crc == 0) || (is_xor && alu_xor == 0) || (is_and && alu_and == 0)
-           || (is_cmp && opnd_cmp == opnd_mov) || (is_cmpi && add_reg == {8'd0, ins[7:0]})
+           || ((is_cmp || is_cmpu) && opnd_cmp == opnd_mov) || (is_cmpi && add_reg == {8'd0, ins[7:0]})
            || (is_tstb && sbit) || (is_probe && lines[ln_p]);
 
-  wire f_we = is_pull || (is_push && e2h_full) || is_shift;
-  wire f_wd = (is_pull && h2e_empty) || is_push || (is_shr && sft_reg[0]) || (is_shl && sft_reg[15]);
+  wire f_we = is_pull || (is_push && e2h_full) || is_shift || is_cmpu;
+  wire f_wd = (is_pull && h2e_empty) || is_push || (is_shr && sft_reg[0]) || (is_shl && sft_reg[15])
+           || (is_cmpu && opnd_cmp < opnd_mov);
 
   wire sr_out = (is_out && !ins[6]) || is_outb;
   wire sr_in = is_in || is_inb;
@@ -382,6 +391,8 @@ module splice_engine (
         tp[i] <= 0;
         tcnt[i] <= 0;
         pending[i] <= 0;
+        since[i] <= 16'hFFFF;
+        tint[i] <= 16'hFFFF;
         ts_line[i] <= 0;
         ts_want[i] <= 2'd3;
         last[i] <= 12'hFFF;
@@ -399,6 +410,13 @@ module splice_engine (
         if (ts_want[i] == 2'd3 && tp[i] != 0)
           tcnt[i] <= tcnt[i] <= 17'd1 ? {1'b0, tp[i]} : tcnt[i] - 17'd1;
         if (tick_now[i]) pending[i] <= 1'b1;
+        // TCAP: the interval that ends at each tick is latched, so firmware can read it late
+        if (tick_now[i]) begin
+          tint[i] <= since[i] == 16'hFFFF ? 16'hFFFF : since[i] + 16'd1;  // since_inc, per context
+          since[i] <= 16'd0;
+        end else if (since[i] != 16'hFFFF) begin
+          since[i] <= since[i] + 16'd1;
+        end
       end
 
       if (prim) begin

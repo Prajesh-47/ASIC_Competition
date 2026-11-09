@@ -137,10 +137,10 @@ The qualifier `.t` on an instruction means: wait for the next tick, then execute
 |---|---|---|
 | Pins | `SET`, `MODE`, `OUT`, `IN`, `PROBE`, `WAIT` | `MODE` is the **injection primitive**. `OUT` with no-shift (`ns`) lets `IN` do the shift, for full duplex on one register |
 | **Fused bit loops** | **`OUTB`, `INB`** | **One bit, shift, and loop back while bits remain.** This is where most of the code saving comes from |
-| Timing | `WAITT`, `TSET`, `TSETR`, `TPHASE`, `TSRC`, `DLY`, `DLYR` | `TSETR` takes the period from a register. Added after the trial |
+| Timing | `WAITT`, `TSET`, `TSETR`, `TPHASE`, `TSRC`, `DLY`, `DLYR`, `TCAP` | `TSETR` takes the period from a register. Added after the trial. `TCAP rd` reads the cycles between the context's last two ticks, saturating at 0xFFFF, latched by hardware at every tick. With `TSRC line, both` that is the length of each line interval, so firmware can measure an edge after it has passed instead of waiting at it. `TCAP.t` reads the interval that ended at the tick it waited for |
 | FIFO | `PULLW`, `PULL`, `PUSH` | `PULLW` stalls until data arrives and loads `BC`. `PULL` doesn't stall, and sets `F` when empty |
 | Setup | `BCI`, `SRI`, `MSB`, `SIDE` | `SIDE` picks the line for side-set: a second line changing on the same edge |
-| Data | `LDI`, `MOV`, `ADD`, `ADDR`, `XOR`, `AND`, `CMP`, `CMPI`, `SHR`, `SHL`, `RAND`, `POLY`, `CRC` | `ADDR` adds a register operand, and sets `Z` but not `F`, like `ADD`. `CRC r, msb` or `lsb` is one CRC step on `Rr`, on the bit last shifted by `OUT`, `OUTB`, `IN` or `INB`, with the polynomial `POLY` set: left with a left-aligned polynomial, or right with a reflected one. It sets `Z` but not `F`. Shifts put the bit shifted out in `F`. `RAND` is one LFSR step, for seeded and repeatable fuzzing |
+| Data | `LDI`, `MOV`, `ADD`, `ADDR`, `XOR`, `AND`, `CMP`, `CMPU`, `CMPI`, `SHR`, `SHL`, `RAND`, `POLY`, `CRC` | `ADDR` adds a register operand, and sets `Z` but not `F`, like `ADD`. `CRC r, msb` or `lsb` is one CRC step on `Rr`, on the bit last shifted by `OUT`, `OUTB`, `IN` or `INB`, with the polynomial `POLY` set: left with a left-aligned polynomial, or right with a reflected one. It sets `Z` but not `F`. Shifts put the bit shifted out in `F`. `RAND` is one LFSR step, for seeded and repeatable fuzzing. `CMPU a, b` is unsigned: `Z` when equal, `F` when a < b |
 | Control | `JMP`, `DJNZ`, `CALL`, `RET`, `TSTB`, `NOP`, `HALT` | `CALL` is one level. `TSTB` sets `Z` from the next output bit. `JMP` conditions: always, Z, NZ, F, !F, BC=0, BC≠0, M (missed tick; reads and clears). After `PROBE`, `Z` means the line is high, so the assembler takes `jmp hi` and `jmp lo` for `z` and `nz`, and warns on `z` or `nz` straight after a `PROBE` |
 | Chip | `IRQ`, `TRIG`, `CAPON`, `CAPOFF`, `CAPMARK` | |
 
@@ -204,6 +204,8 @@ The qualifier `.t` on an instruction means: wait for the next tick, then execute
 | `11100111` | `TSETR` | s 3 |
 | `11101000` | `POLY` | s 3 |
 | `11101001` | `CRC` | r 2, dir 1 |
+| `11101010` | `CMPU` | a 3, b 3 |
+| `11101011` | `TCAP` | r 2, tick 1 |
 
 Field names: `line` 0–7 is a bus line and 8–11 is AUX; `side` is enable and value; `rel` branches back up to 15 words; `to` is an absolute address, 9 bits so the 512-word macro needs no ISA change, though the 256-word macro uses 8; `hl` selects `LDI`'s high or low byte; `sh` is `SRI`'s shift. The `stamp` bit in `WAIT` is held for the capture unit. `ADDR`, `TSETR`, `POLY` and `CRC` were added after v1 in free codes, so no opcode moved. The assembler picks `ADDR` and `TSETR` when the operand is a register: `add r0, r1`, `tset r1`. About 8.7% of the encoding space is still free.
 

@@ -779,7 +779,8 @@ def state_differences(dut, model):
             "msb": (int(c.msb), engine.msb[k]), "lfsr": (c.lfsr, engine.lfsr[k]),
             "side": (c.side_line, engine.side_ln[k]), "tsl": (c.tsrc_line, engine.ts_line[k]),
             "tsw": (c.tsrc_want, engine.ts_want[k]), "poly": (c.poly, engine.poly[k]),
-            "lastb": (c.lastb, engine.lastb[k]),
+            "lastb": (c.lastb, engine.lastb[k]), "M": (c.M, engine.m[k]),
+            "since": (c.since, engine.since[k]), "tint": (c.tint, engine.tint[k]),
         }
         for r in range(4):
             pairs[f"R{r}"] = (c.R[r], engine.rr[k * 4 + r])

@@ -43,9 +43,12 @@ calp:   tcap.t  r2
 calk:   djnz    r3, calp
         mov     r2, r1
         call    thr
+        ldi     r3, 128       ; a subframe has at most 60 edges and one P, so 2 subframes' worth
 hunt:   tcap.t  r2
         cmpu    r2, r1
-        jmp     f, hunt       ; wait for P
+        jmp     nf, pre       ; P
+        djnz    r3, hunt
+        jmp     cal           ; none: calibration took in a gap, such as idle before the stream, so redo it
 
 ; r2 holds P, which opened a preamble. The next three intervals tell B (1 3), M (3 1 1) or W (2 1 2) apart.
 pre:    call    thr
