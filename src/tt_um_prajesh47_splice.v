@@ -14,6 +14,11 @@
 
 `default_nettype none
 
+// Host FIFO depth, as log2 of words in each direction.
+`ifndef SPLICE_FIFO_LOG2
+`define SPLICE_FIFO_LOG2 3
+`endif
+
 module tt_um_prajesh47_splice (
     input  wire [7:0] ui_in,    // Dedicated inputs
     output wire [7:0] uo_out,   // Dedicated outputs
@@ -53,6 +58,10 @@ module tt_um_prajesh47_splice (
   wire [1:0]  halted;
   wire        h2e_empty, h2e_pop, e2h_full, e2h_push;
   wire [15:0] h2e_head, e2h_data;
+  wire [7:0]  e2h_level, h2e_level;
+  localparam [8:0] FIFO_WORDS = 9'd1 << `SPLICE_FIFO_LOG2;
+  wire [8:0]  h2e_room = FIFO_WORDS - {1'b0, h2e_level};
+  wire [7:0]  h2e_free = h2e_room > 9'd255 ? 8'd255 : h2e_room[7:0];
 
   wire [7:0] status = {2'd0, irq, e2h_empty, h2e_full, halted, running};
 
@@ -81,7 +90,9 @@ module tt_um_prajesh47_splice (
       .fifo_full (h2e_full),
       .fifo_pop  (host_pop),
       .fifo_rdata(e2h_head),
-      .fifo_empty(e2h_empty)
+      .fifo_empty(e2h_empty),
+      .fifo_level(e2h_level),
+      .fifo_free (h2e_free)
   );
 
   // Host registers: 0 mode, 1 open-drain lines, 2 fast pass-through lines, 3 bridge holdoff,
@@ -152,13 +163,13 @@ module tt_um_prajesh47_splice (
   // ------------------------------------------------------------------ FIFOs, cleared with a run
   wire engine_rst = !rst_n || start || stop;
 
-  splice_fifo h2e (
+  splice_fifo #(.DEPTH_LOG2(`SPLICE_FIFO_LOG2)) h2e (
       .clk(clk), .rst_n(rst_n), .clear(!rst_n || stop), .push(host_push), .din(host_wdata), .full(h2e_full),
-      .pop(h2e_pop), .head(h2e_head), .empty(h2e_empty));
+      .pop(h2e_pop), .head(h2e_head), .empty(h2e_empty), .level(h2e_level));
 
-  splice_fifo e2h (
+  splice_fifo #(.DEPTH_LOG2(`SPLICE_FIFO_LOG2)) e2h (
       .clk(clk), .rst_n(rst_n), .clear(engine_rst), .push(e2h_push), .din(e2h_data), .full(e2h_full),
-      .pop(host_pop), .head(e2h_head), .empty(e2h_empty));
+      .pop(host_pop), .head(e2h_head), .empty(e2h_empty), .level(e2h_level));
 
   // ------------------------------------------------------------------ Engine
   wire [8:0]  fetch_addr;

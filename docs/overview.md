@@ -179,7 +179,7 @@ which count as weaker evidence. Full results are in [`adaptability.md`](adaptabi
   20 ns. All of its logic works, but at up to 1.25 MBd against 125.
 
 **More useful than the passes is what got in the way.** In order of how much it matters:
-- The host link: a 4-word buffer over a slow SPI port.
+- The host link: an 8-word buffer each way over a slow SPI port, with a full-duplex exchange command.
 - Too few registers.
 - No register-to-register add.
 - A timer period that can't be set from a register.

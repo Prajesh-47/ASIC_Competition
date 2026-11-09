@@ -2,16 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // FIFO safety for any sequence of push, pop and clear. A shadow counter and one tracked word show that
-// the count stays in range, full and empty are exact, and a word comes out unchanged and in order.
+// the count stays in range, full, empty and the level are exact, and a word comes out unchanged and in order.
 `default_nettype none
 
 module fifo_props (input wire clk, input wire rst, input wire clear, input wire push, input wire pop,
                    input wire [15:0] din, input wire pick);
   wire full, empty;
   wire [15:0] head;
+  wire [7:0] level;
   splice_fifo #(.DEPTH_LOG2(2)) dut (
       .clk(clk), .rst_n(!rst), .clear(clear), .push(push), .din(din), .full(full), .pop(pop),
-      .head(head), .empty(empty), .wp_out(wp), .rp_out(rp), .peek(slot), .peek_word(stored));
+      .head(head), .empty(empty), .level(level), .wp_out(wp), .rp_out(rp), .peek(slot), .peek_word(stored));
 
   // Not the claim, but what makes it inductive: the shadow state agrees with the real pointers and memory
   wire [2:0] wp, rp;
@@ -49,6 +50,7 @@ module fifo_props (input wire clk, input wire rst, input wire clear, input wire 
     assert (((wp - rp) & 3'd7) == count);
     assert (full == (count == 4));
     assert (empty == (count == 0));
+    assert (level == count);
     if (empty) assert (head == 16'd0);
     if (tracking) begin
       assert (ahead < count);

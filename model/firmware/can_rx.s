@@ -7,8 +7,8 @@
 ; For each frame the FIFO gets the bits from SOF to the end of the CRC, in 16-bit words, MSB first
 ; (the last word's unused low bits mean nothing), then one status word:
 ;   0 good and ACKed, 1 bad CRC, 2 stuff error (the frame's bits stop at the error).
-; Assumes DLC is 8 or less. Needs L open-drain (register 1). The FIFO holds 4 words, so frames with more
-; than 1 data byte need the host reading during the frame. Words pushed to a full FIFO are lost.
+; Assumes DLC is 8 or less. Needs L open-drain (register 1). The FIFO holds 8 words, so a frame whose bits
+; and status take more than that needs the host reading during the frame. Words pushed to a full FIFO are lost.
 ;
 ; r0 CRC, r1 scratch, r2 bits left in this field, r3 run length, with bit 7 set for a run of ones.
 .equ BIT, 100                 ; 500 kbit/s at 50 MHz

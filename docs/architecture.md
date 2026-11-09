@@ -296,8 +296,11 @@ SCK is at most core/8, oversampled with 2-flop synchronizers, so the whole chip 
 | `0x03` / `0x04` | Write / read capture memory | `aH aL` then words | Stopped only |
 | `0x05` / `0x06` | Write / read register | `reg` then value | See below |
 | `0x10` / `0x11` | `START` / `STOP` | | `START` keeps FIFO words pushed beforehand. `STOP` releases every line |
-| `0x12` | Status | one byte | `{0, 0, irq, e2h_empty, h2e_full, halted[1:0], running}` |
+| `0x12` | Status | 1 to 3 bytes | `{0, 0, irq, e2h_empty, h2e_full, halted[1:0], running}`, then the engine-to-host level and the host-to-engine free space in words. A host that reads one byte sees no change |
 | `0x20` / `0x21` | Write / read FIFO | words | Writing a full FIFO drops the word. Reading an empty FIFO returns 0. A word leaves the FIFO when the host starts clocking it, so ending a read after N words consumes exactly N |
+| `0x22` | Exchange (`XFER`) | `nw`, pad, then word slots | Full duplex. During `nw` and the pad, SPLICE sends the level and free space, both taken when the command byte ends. Each slot then pushes the host's word for the first `nw` slots, if there's room, and pops a word for the first `level` slots. Later slots read as 0 without popping, so a stored 0 is data and a word that arrives during the burst waits for the next XFER. Ending inside a slot pushes nothing and, as with `0x21`, spends that slot's engine word |
+
+Each FIFO holds 8 words (`SPLICE_FIFO_LOG2`, a build define; tests read the depth from STATUS after reset). With XFER, full-duplex HDLC at 1 Mbit/s each way keeps up down to SCK = core/20 with 8 words, against core/8 for the STATUS, write, read loop at any depth (`test/test_hostlink.py`).
 
 Registers: 0 mode (bit 0: two contexts), 1 open-drain lines, 2 fast pass-through lines, 3 bridge holdoff, 4 and 5 context 1's start address, 6 and 7 capture's 4 watched lines, 8 and 9 capture prescaler, 10 capture control (write bits 2:0 mode, bit 7 start, bit 6 stop; read `{active, wrapped, triggered, 0, 0, mode}`), 11 and 12 entries kept after a trigger, 13 and 14 capture write pointer (read only). **`STEP` isn't built yet.**
 

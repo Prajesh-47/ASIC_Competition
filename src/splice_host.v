@@ -9,7 +9,13 @@
  *   0x05 WR_REG   reg val               0x06 RD_REG   reg    val
  *   0x10 START                          0x11 STOP
  *   0x12 STATUS   status                0x20 FIFO_WR  word...
- *   0x21 FIFO_RD  word...
+ *   0x21 FIFO_RD  word...                0x22 XFER     nw pad  word...
+ *
+ * STATUS then sends the engine-to-host level and the host-to-engine free space, one byte each, so a
+ * host can size a burst. XFER is full duplex. While the host sends nw and a pad byte, SPLICE sends that
+ * level and free space, both taken when the command byte ends. Then each word slot pushes the host's
+ * word for the first nw slots, if there is room, and pops the engine's word for the first level slots.
+ * Later slots read as 0 without popping, so a word that arrives during the burst waits for the next one.
  * Memory is only reachable while the engine is stopped.
  */
 `default_nettype none
@@ -43,11 +49,13 @@ module splice_host (
     input  wire        fifo_full,
     output reg         fifo_pop,
     input  wire [15:0] fifo_rdata,
-    input  wire        fifo_empty
+    input  wire        fifo_empty,
+    input  wire [7:0]  fifo_level,  // engine-to-host words waiting
+    input  wire [7:0]  fifo_free    // host-to-engine words of room
 );
   localparam [7:0] WR_PROG = 8'h01, RD_PROG = 8'h02, WR_CAP = 8'h03, RD_CAP = 8'h04,
                    WR_REG = 8'h05, RD_REG = 8'h06, START = 8'h10, STOP = 8'h11,
-                   STATUS = 8'h12, FIFO_WR = 8'h20, FIFO_RD = 8'h21;
+                   STATUS = 8'h12, FIFO_WR = 8'h20, FIFO_RD = 8'h21, XFER = 8'h22;
 
   reg [1:0] sck_s, mosi_s, cs_s;
   reg       sck_p;
@@ -73,6 +81,9 @@ module splice_host (
   reg       rd_capture;
   reg       reg_load;  // register read data is ready
   reg       pop_next;  // FIFO head is loaded in tx, and goes once the host clocks it
+  reg [7:0] xf_free;   // XFER: free space taken with the level, sent second
+  reg [7:0] xf_rd;     // XFER: words still to pop
+  reg [7:0] xf_wr;     // XFER: words still to push
 
   wire       byte_done = cs_active && sck_rise && bitn == 3'd7;
   wire [7:0] byte_in = {rx, mosi_s[1]};
@@ -108,6 +119,9 @@ module splice_host (
       reg_wdata <= 0;
       fifo_wdata <= 0;
       pop_next <= 0;
+      xf_free <= 0;
+      xf_rd <= 0;
+      xf_wr <= 0;
     end else if (!cs_active) begin
       pop_next <= 1'b0;
       bitn <= 0;
@@ -143,6 +157,11 @@ module splice_host (
             START: start <= 1'b1;
             STOP: stop <= 1'b1;
             STATUS: tx <= status;
+            XFER: begin
+              tx <= fifo_level;
+              xf_rd <= fifo_level;
+              xf_free <= fifo_free;
+            end
             FIFO_RD: begin
               tx <= fifo_rdata[15:8];
               rd_word <= fifo_rdata;
@@ -198,6 +217,29 @@ module splice_host (
           end else begin
             fifo_wdata <= {hi_byte, byte_in};
             fifo_push <= !fifo_full;
+          end
+        end else if (cmd == STATUS) begin
+          if (phase == 1) tx <= fifo_level;
+          else if (phase == 2) tx <= fifo_free;
+        end else if (cmd == XFER && phase == 1) begin
+          xf_wr <= byte_in;
+          tx <= xf_free;
+        end else if (cmd == XFER) begin
+          // phase 2 ends the pad byte, and every later pair is one word slot
+          if (phase != 3'd2) word_lo <= !word_lo;
+          if (phase != 3'd2 && !word_lo) begin
+            hi_byte <= byte_in;
+            tx <= rd_word[7:0];
+          end else begin
+            if (phase != 3'd2) begin
+              fifo_wdata <= {hi_byte, byte_in};
+              fifo_push <= xf_wr != 0 && !fifo_full;
+              if (xf_wr != 0) xf_wr <= xf_wr - 8'd1;
+            end
+            tx <= xf_rd != 0 ? fifo_rdata[15:8] : 8'd0;
+            rd_word <= xf_rd != 0 ? fifo_rdata : 16'd0;
+            pop_next <= xf_rd != 0;
+            if (xf_rd != 0) xf_rd <= xf_rd - 8'd1;
           end
         end else if (cmd == FIFO_RD) begin
           word_lo <= !word_lo;

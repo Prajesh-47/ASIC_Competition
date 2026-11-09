@@ -40,6 +40,11 @@ endif
 
 # Allow sharing configuration between design and testbench via `include`:
 COMPILE_ARGS 		+= -I$(SRC_DIR)
+# Host FIFO depth as log2 of words, for measuring. The RTL's default applies when unset.
+ifdef FIFO_LOG2
+COMPILE_ARGS    += -DSPLICE_FIFO_LOG2=$(FIFO_LOG2)
+SIM_BUILD       := $(SIM_BUILD)_fifo$(FIFO_LOG2)
+endif
 
 # Include the testbench sources:
 VERILOG_SOURCES += $(PWD)/tb.v

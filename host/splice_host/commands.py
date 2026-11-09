@@ -42,6 +42,27 @@ class Board:
     def status(self):
         return self.xfer([0x12, 0])[1]
 
+    def levels(self):
+        """(status, engine-to-host words waiting, host-to-engine words of room)."""
+        data = self.xfer([0x12, 0, 0, 0])
+        return data[1], data[2], data[3]
+
+    def exchange(self, words=(), slots=0):
+        """One full-duplex XFER: pushes `words` while popping up to max(len(words), slots) words.
+
+        Returns (words read, free). Only words the chip reported as waiting are returned, so a stored 0
+        is data. Words past the room are dropped, so send no more than the free space the last call
+        returned: that room can only grow until the host writes again.
+        """
+        words = list(words)
+        if len(words) > 255:
+            raise ValueError("XFER sends at most 255 words")
+        count = max(len(words), slots)
+        data = self.xfer([0x22, len(words), 0] + word_bytes(words + [0] * (count - len(words))))
+        level, free = data[1], data[2]
+        got = [data[3 + 2 * i] << 8 | data[4 + 2 * i] for i in range(min(level, count))]
+        return got, max(free - len(words), 0)
+
     def push(self, words):
         self.xfer([0x20] + word_bytes(words))
 

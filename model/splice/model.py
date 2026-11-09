@@ -36,7 +36,7 @@ class Context:
 
 
 class Splice:
-    FIFO_DEPTH = 4
+    FIFO_DEPTH = 8
 
     def __init__(self):
         self.prog = [0] * 512

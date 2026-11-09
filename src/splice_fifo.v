@@ -14,7 +14,8 @@ module splice_fifo #(parameter DEPTH_LOG2 = 2) (
     output wire        full,
     input  wire        pop,
     output wire [15:0] head,
-    output wire        empty
+    output wire        empty,
+    output wire [7:0]  level     // words held, saturating at 255
 `ifdef FORMAL
     ,
     output wire [DEPTH_LOG2:0]   wp_out,
@@ -34,6 +35,9 @@ module splice_fifo #(parameter DEPTH_LOG2 = 2) (
 `endif
 
   assign empty = wp == rp;
+  wire [DEPTH_LOG2:0] count = wp - rp;
+  wire [15:0] count16 = {{(15 - DEPTH_LOG2){1'b0}}, count};
+  assign level = count16 > 16'd255 ? 8'd255 : count16[7:0];
   assign full  = wp[DEPTH_LOG2] != rp[DEPTH_LOG2] && wp[DEPTH_LOG2-1:0] == rp[DEPTH_LOG2-1:0];
   // An empty FIFO reads as 0, not as whatever an unwritten or old slot holds.
   assign head  = empty ? 16'd0 : mem[rp[DEPTH_LOG2-1:0]];

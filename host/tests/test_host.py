@@ -219,6 +219,19 @@ def test_cli_hex_file_and_registers():
     assert cli(chip, "reg", "3").strip() == "0x40"
 
 
+def test_exchange_encodes_and_keeps_only_waiting_words():
+    sent = []
+
+    def xfer(data):
+        sent.append(list(data))
+        # two words waiting (one of them 0), room for 5, then a third word arrives during the burst
+        return [0, 2, 5, 0x12, 0x34, 0x00, 0x00, 0x56, 0x78]
+
+    got, free = Board(xfer).exchange([0xAAAA], slots=3)
+    assert sent == [[0x22, 1, 0, 0xAA, 0xAA, 0, 0, 0, 0]]
+    assert got == [0x1234, 0x0000] and free == 4
+
+
 def test_status_names_match_the_spec():
     assert status_text(0b00010001) == "0x11 running e2h_empty"
     assert status_text(0b00100000) == "0x20 irq"

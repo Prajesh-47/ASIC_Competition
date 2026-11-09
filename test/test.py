@@ -102,6 +102,23 @@ async def status(dut):
     return (await spi_xfer(dut, [0x12, 0]))[1]
 
 
+async def levels(dut):
+    """STATUS with its two extra bytes: (status, engine-to-host words waiting, host-to-engine room)."""
+    data = await spi_xfer(dut, [0x12, 0, 0, 0])
+    return data[1], data[2], data[3]
+
+
+async def fifo_xfer(dut, words=(), slots=None):
+    """XFER: pushes words while popping. Returns (level, free, words read), keeping only the words the
+    level said were there."""
+    nw = len(words)
+    slots = nw if slots is None else max(slots, nw)
+    data = await spi_xfer(dut, [0x22, nw, 0] + word_bytes(list(words) + [0] * (slots - nw)))
+    level, free = data[1], data[2]
+    got = [data[3 + 2 * i] << 8 | data[4 + 2 * i] for i in range(slots)]
+    return level, free, got[:min(level, slots)], got
+
+
 async def reset(dut):
     clock = Clock(dut.clk, 20, unit="ns")  # 50 MHz, matches info.yaml
     cocotb.start_soon(clock.start())
@@ -112,6 +129,9 @@ async def reset(dut):
     await ClockCycles(dut.clk, 10)
     dut.rst_n.value = 1
     await ClockCycles(dut.clk, 5)
+    # The FIFO depth is a build choice. Right after reset the room reported is the whole FIFO, and the
+    # golden model is told the same, so the two can't silently differ.
+    Splice.FIFO_DEPTH = (await spi_xfer(dut, [0x12, 0, 0, 0]))[3]
 
 
 async def capture(dut, cycles, stim=None):
@@ -228,15 +248,13 @@ async def test_rand_sequence_and_seed(dut):
 async def test_push_to_full_fifo_sets_f(dut):
     """Data lost to a full FIFO has to be visible to firmware."""
     await reset(dut)
+    depth = (await levels(dut))[2]  # all room, right after reset
     prog = assemble("""
         sri  0x11
+""" + "        push\n" * depth + """
+        jmp  f, early     ; a full FIFO's worth fits
         push
-        push
-        push
-        push
-        jmp  f, early     ; four words fit
-        push
-        jmp  f, good      ; the fifth doesn't
+        jmp  f, good      ; one more doesn't
         halt
 good:   set  8, 1
         halt
@@ -245,10 +263,10 @@ early:  set  9, 1
 """)
     await load_program(dut, prog.words)
     await start(dut)
-    await ClockCycles(dut.clk, 30)
+    await ClockCycles(dut.clk, 30 + depth)
     aux = int(dut.uo_out.value) >> 4
     assert aux == 0b0001, f"AUX_OUT={aux:04b}"
-    assert await fifo_read(dut, 4) == [0x11] * 4
+    assert await fifo_read(dut, depth) == [0x11] * depth
 
 
 # ------------------------------------------------------------------ Memories through the host port
@@ -314,6 +332,108 @@ async def test_fifo_read_consumes_exactly_what_it_reads(dut):
         await spi_xfer(dut, [0x21])  # the command alone reads nothing, so it consumes nothing
         assert (await fifo_read(dut, 1)) == [expected]
     assert (await status(dut)) & 0x10, "FIFO should now be empty"
+
+
+ECHO_AFTER_FALL = """
+        ldi     r1, 0
+        mov     to, r1        ; no timeout
+        wait    0, fall       ; the test releases the echo by pulling line 0 low
+loop:   pullw   16
+        push
+        jmp     loop
+"""
+
+
+@cocotb.test()
+async def test_status_reports_fifo_levels(dut):
+    """Old hosts read one STATUS byte. Two more give the level each way, exactly."""
+    await reset(dut)
+    st, level, depth = await levels(dut)
+    assert (st, level) == (0x10, 0) and depth >= 4 and depth & (depth - 1) == 0, f"{st:#x} {level} {depth}"
+    prog = assemble("        sri 0x11\n" + "        push\n" * 3 + "        halt\n")
+    await load_program(dut, prog.words)
+    await start(dut)
+    await ClockCycles(dut.clk, 30)
+    await fifo_write(dut, [1, 2])  # halted, so nothing pulls them
+    _, level, free = await levels(dut)
+    assert (level, free) == (3, depth - 2), f"level {level}, free {free}"
+    assert await status(dut) & 0x10 == 0, "the one-byte STATUS is unchanged"
+
+
+@cocotb.test()
+async def test_xfer_pushes_and_pops_in_one_transaction(dut):
+    """Words go both ways at once. A stored 0 counts as data, and a word that arrives during a burst
+    waits for the next one instead of being lost."""
+    await reset(dut)
+    depth = (await levels(dut))[2]
+    await load_program(dut, assemble(ECHO_AFTER_FALL).words)
+    await start(dut)
+    level, free, got, _ = await fifo_xfer(dut, [0x1111, 0x0000, 0x3333], slots=4)
+    assert (level, free, got) == (0, depth, []), f"{level} {free} {got}"
+    dut.uio_in.value = 0xFE
+    await ClockCycles(dut.clk, 50)
+    assert (await levels(dut))[1:] == (3, depth)
+    level, free, got, raw = await fifo_xfer(dut, [0x4444], slots=5)
+    assert (level, got) == (3, [0x1111, 0x0000, 0x3333]), f"{level} {[hex(w) for w in got]}"
+    assert raw[3:] == [0, 0], "slots past the level read as 0"
+    await ClockCycles(dut.clk, 50)
+    level, free, got, _ = await fifo_xfer(dut, slots=2)
+    assert (level, got) == (1, [0x4444]), f"pushed in the same XFER as the reads: {level} {got}"
+    assert (await levels(dut))[1:] == (0, depth)
+
+
+@cocotb.test()
+async def test_xfer_pops_only_what_it_clocks(dut):
+    """A burst shorter than the level leaves the rest queued, in order."""
+    await reset(dut)
+    await load_program(dut, assemble(ECHO_AFTER_FALL).words)
+    await start(dut)
+    dut.uio_in.value = 0xFE
+    await fifo_write(dut, [0xA001])
+    await ClockCycles(dut.clk, 20)
+    await fifo_write(dut, [0xA002, 0xA003])
+    await ClockCycles(dut.clk, 50)
+    level, _, got, _ = await fifo_xfer(dut, slots=1)
+    assert (level, got) == (3, [0xA001]), f"{level} {got}"
+    level, _, got, _ = await fifo_xfer(dut, slots=3)
+    assert (level, got) == (2, [0xA002, 0xA003]), f"{level} {got}"
+
+
+@cocotb.test()
+async def test_xfer_into_full_fifo_keeps_the_first_words(dut):
+    """Words past the room are dropped, and the free space shows it. The ones that fit arrive intact."""
+    await reset(dut)
+    depth = (await levels(dut))[2]
+    await load_program(dut, assemble(ECHO_AFTER_FALL).words)
+    await start(dut)
+    sent = [0xB000 + i for i in range(depth + 2)]
+    await fifo_xfer(dut, sent)
+    assert (await levels(dut))[2] == 0
+    dut.uio_in.value = 0xFE
+    out = []
+    for _ in range(6):
+        await ClockCycles(dut.clk, 40 * depth)
+        out += (await fifo_xfer(dut, slots=depth))[2]
+    assert out == sent[:depth], f"{[hex(w) for w in out]}"
+
+
+@cocotb.test()
+async def test_xfer_ended_early(dut):
+    """Ending after the header moves nothing. Ending inside a slot pushes nothing, and spends that slot's
+    engine word, as FIFO_RD does: its first bit is already on MISO."""
+    await reset(dut)
+    depth = (await levels(dut))[2]
+    await load_program(dut, assemble(ECHO_AFTER_FALL).words)
+    await start(dut)
+    dut.uio_in.value = 0xFE
+    await fifo_write(dut, [0xC001, 0xC002, 0xC003])
+    await ClockCycles(dut.clk, 80)
+    await spi_xfer(dut, [0x22, 1, 0])
+    assert (await levels(dut))[1:] == (3, depth), "header only"
+    await spi_xfer(dut, [0x22, 1, 0, 0xD0])  # one slot, cut after the high byte
+    await ClockCycles(dut.clk, 60)
+    level, _, got, _ = await fifo_xfer(dut, slots=3)
+    assert (level, got) == (2, [0xC002, 0xC003]), f"{level} {[hex(w) for w in got]}"
 
 
 @cocotb.test()

@@ -77,3 +77,26 @@ async def test_agent_spi_against_rtl(dut):
     await replay(dut, bytes(commands(lambda b: b.stop())[0]))
     await ClockCycles(dut.clk, 8)
     assert int(str(dut.uo_out.value)[-4]) == 0, "ACTIVE should be low after a replayed stop"
+
+
+@cocotb.test()
+async def test_agent_exchange_against_rtl(dut):
+    """The library's XFER, through the agent's bit-bang code: words go out and come back echoed."""
+    from test import ECHO_AFTER_FALL, assemble
+    await reset(dut)
+    for transaction in commands(lambda b: b.load(assemble(ECHO_AFTER_FALL).words)):
+        await replay(dut, bytes(transaction))
+    await replay(dut, bytes(commands(lambda b: b.start())[0]))
+    dut.uio_in.value = 0xFE
+    out = [0x0000, 0x8001, 0xFFFF]
+    returned = []
+
+    def decode(call, back):
+        return Board(lambda data: back).exchange(*call)
+
+    for call in ((out, 0), ((), 4)):
+        back = await replay(dut, bytes(commands(lambda b: b.exchange(*call))[0]))
+        returned.append(decode(call, back))
+        await ClockCycles(dut.clk, 80)
+    assert returned[0][0] == [], f"nothing was waiting yet: {returned[0]}"
+    assert returned[1][0] == out, f"{[hex(w) for w in returned[1][0]]}"

@@ -3,7 +3,7 @@
 ; Words reach the FIFO as they fill, oldest bit lowest, from SYNC on. At the end of the packet (SE0)
 ; the unfinished word follows. Its lowest set bit is a marker, with the last data bits above it, so
 ; the packet's length needs no counter. IRQ then says the packet is over. CRC is left to the host.
-; A word takes about 10 us on the wire and the FIFO holds 4, so the host must keep up.
+; A word takes about 10 us on the wire and the FIFO holds 8, so the host must keep up.
 ;
 ; Clock recovery as in can_rx.s, on both edges. A timed-out WAIT sets F, and shifts overwrite F, so the
 ; two paths that don't shift, or that shift a 1 out, clear it first by shifting r3 out and back.
