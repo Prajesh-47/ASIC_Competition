@@ -40,7 +40,9 @@
   "CLOCK_PERIOD": 20,
 
   "//": "Hold slack margin - Increase them in case you are getting hold violations.",
-  "PL_RESIZER_HOLD_SLACK_MARGIN": 0.1,
+  "//": "Hold margin 0.05 ns on top of the 0.25 ns clock uncertainty, from 0.1: placement-stage hold repair",
+  "//": "inserted 1,452 delay cells (+11% area), some on the critical slow-corner path.",
+  "PL_RESIZER_HOLD_SLACK_MARGIN": 0.05,
   "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.05,
 
   "//": "RUN_LINTER, LINTER_INCLUDE_PDK_MODELS - Disabling the linter is not recommended!",
