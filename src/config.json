@@ -20,8 +20,9 @@
   "RUN_POST_GRT_RESIZER_TIMING": true,
   "RUN_POST_GRT_DESIGN_REPAIR": true,
 
-  "//": "Experiment: repair timing at the slow corner too. The default repairs only typical, where the worst",
-  "//": "path had about 7 ns to spare while the slow corner, which signoff checks, had 0.52.",
+  "//": "Make the flow's setup checker look at the slow corner too; by default it checks only typical. This",
+  "//": "doesn't change the build: the resizer already uses every corner in STA_CORNERS. On exp/isa-crc it",
+  "//": "gave the same result to the digit (gds 42514384860, 0.52 ns), even with 0.5 ns margins (42514387564).",
   "TIMING_VIOLATION_CORNERS": ["*typ*", "*slow*"],
 
   "//": "Repair slew and capacitance to wider margins, and buffer any wire over 200 um (exp/slew-margin-wire,",
