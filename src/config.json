@@ -35,6 +35,11 @@
   "GRT_DESIGN_REPAIR_MAX_WIRE_LENGTH": 200,
   "DESIGN_REPAIR_MAX_WIRE_LENGTH": 200,
 
+  "//": "Don't delay the SRAM clock to match the register tree. CTS put 5 buffers (0.7 ns at the slow corner)",
+  "//": "before both macros, which launches the critical SRAM read paths later and causes the worst hold",
+  "//": "violations at the macro inputs. Register-to-SRAM paths have about 10 ns of slack to give.",
+  "CTS_DELAY_BUFFER_DERATE_PCT": 0,
+
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
   "//": "The value is in nanoseconds, so 20ns == 50MHz.",
   "CLOCK_PERIOD": 20,
