@@ -822,7 +822,9 @@ STATE_CHECK_EVERY = 16  # reading every register through the simulator is slow, 
 
 
 def random_program(rng, length, ctx1):
-    """Valid random programs that stay in bounds, so no read is undefined."""
+    """Valid random programs that stay in bounds, so no read is undefined. ctx1 is one start address,
+    or a list of them for contexts 1 up, and each start parks too."""
+    starts = set(ctx1) if isinstance(ctx1, (list, tuple)) else {ctx1}
     park = encode("WAIT", line=PARK_LINE, c=0, stamp=0)
     words = [park, encode("TSET", p=rng.randrange(1, 30))]
     words += [encode("LDI", r=0, hl=0, v=rng.randrange(1, 40)), encode("MOV", d=6, s=0)]  # set a timeout
@@ -837,7 +839,7 @@ def random_program(rng, length, ctx1):
     choices = list(TABLE)
     while len(words) < length - 1:
         pc = len(words)
-        if pc == ctx1:
+        if pc in starts:
             words.append(park)
             continue
         if rng.random() < 0.02:  # reserved encodings must behave as NOP
@@ -877,7 +879,7 @@ def random_program(rng, length, ctx1):
             elif name == "dly":
                 value = rng.randrange(0, min(1 << width, 6))
             fields[name] = value
-        if op == "JMP" and fields["c"] == COND["BC0"] and pc + 1 != ctx1 and pc + 1 < length - 1 \
+        if op == "JMP" and fields["c"] == COND["BC0"] and pc + 1 not in starts and pc + 1 < length - 1 \
                 and rng.random() < 0.5:
             # Few BC=0 jumps run at all, so set BC up for both outcomes rather than leave it to chance
             words.append(encode("BCI", n=0 if rng.random() < 0.5 else rng.randrange(1, 32)))
@@ -919,22 +921,33 @@ def state_differences(dut, model):
 
 
 async def differential_once(dut, seed, cycles, two):
-    """One random program on both, comparing every output pin on every cycle."""
+    """One random program on both, comparing every output pin on every cycle. `two` is the number of
+    contexts, or a bool for one or two. With more than one, PULL and PUSH are routed at random to the host
+    or to the links between contexts."""
     rng = random.Random(seed)
-    length = 48
-    ctx1 = length // 2 if two else 0
-    words = random_program(rng, length, ctx1 if two else -1)
+    nctx = two if not isinstance(two, bool) else (2 if two else 1)
+    length = 48 if nctx <= 2 else 64
+    starts = [length * k // nctx for k in range(1, nctx)] + [0] * (3 - (nctx - 1))
+    words = random_program(rng, length, starts[:nctx - 1] if nctx > 1 else -1)
     odrain, fast = rng.getrandbits(8), rng.getrandbits(8)
     holdoff = rng.choice([0, 1, 2, 5, 20, 64])
     preload = [rng.getrandbits(16) for _ in range(rng.randrange(0, 5))]
+    pull_sel = push_sel = 0
+    if nctx > 2:
+        pull_sel, push_sel = rng.getrandbits(2 * nctx), rng.getrandbits(2 * nctx)
+    two = nctx > 1
 
     await stop(dut)
     await load_program(dut, words)
-    await write_reg(dut, 0, int(two))
+    await write_reg(dut, 0, nctx - 1)
     await write_reg(dut, 1, odrain)
     await write_reg(dut, 2, fast)
     await write_reg(dut, 4, 0)
-    await write_reg(dut, 5, ctx1)
+    await write_reg(dut, 5, starts[0])
+    await write_reg(dut, 17, starts[1])
+    await write_reg(dut, 19, starts[2])
+    await write_reg(dut, 20, pull_sel)
+    await write_reg(dut, 21, push_sel)
     await write_reg(dut, 3, holdoff)
     watch = rng.getrandbits(16)
     prescale, cap_mode, post = rng.randrange(0, 6), rng.getrandbits(3) & 0b101, rng.randrange(0, 6)
@@ -954,10 +967,12 @@ async def differential_once(dut, seed, cycles, two):
     # Both sides are now parked. With two contexts the slot order isn't known yet, so keep a model
     # for each order and drop whichever disagrees. That's the only freedom the comparison gets.
     models = []
-    for parity in (0, 1) if two else (0,):
+    for parity in range(nctx):
         model = Splice()
         model.load(words)
-        model.two, model.odrain, model.fast, model.ctx1_pc = two, odrain, fast, ctx1
+        model.nctx, model.odrain, model.fast, model.ctx_pc = nctx, odrain, fast, list(starts)
+        model.pull_sel = [(pull_sel >> (2 * k)) & 3 for k in range(4)]
+        model.push_sel = [(push_sel >> (2 * k)) & 3 for k in range(4)]
         model.holdoff = holdoff
         model.cap_watch, model.cap_prescale, model.cap_mode, model.cap_post = watch, prescale, cap_mode, post
         for word in preload:
@@ -1046,6 +1061,18 @@ async def test_rtl_matches_model_two_contexts(dut):
     runs, cycles = (3, 300) if GATE_LEVEL else (40, 800)
     for seed in range(runs):
         await differential_once(dut, 2000 + seed, cycles, True)
+
+
+@cocotb.test()
+async def test_rtl_matches_model_four_contexts(dut):
+    """Three and four contexts, each a slot in turn, with PULL and PUSH routed at random through the links."""
+    await reset(dut)
+    runs, cycles = (2, 300) if GATE_LEVEL else (24, 1200)
+    for seed in range(runs):
+        await differential_once(dut, 4000 + seed, cycles, 3 + seed % 2)
+    await stop(dut)
+    for reg in (0, 20, 21):
+        await write_reg(dut, reg, 0)
 
 
 @cocotb.test()

@@ -3,17 +3,19 @@
  * Copyright (c) 2026 Prajesh-47
  * SPDX-License-Identifier: Apache-2.0
  *
- * Two contexts share one program memory: one context at full rate, or both at half rate.
+ * Up to four contexts share one program memory, in a fixed round robin: with n contexts running,
+ * each gets every nth cycle, so its timing is still exact.
  * Only explicit waits stall. Everything else takes 1 cycle plus its delay field.
  */
 `default_nettype none
 
-module splice_engine (
+module splice_engine #(parameter NCTX = 4) (
     input  wire        clk,
     input  wire        rst,        // synchronous: reset, or the host starting or stopping a run
     input  wire        start,
-    input  wire        two_ctx,
-    input  wire [8:0]  ctx1_pc,
+    input  wire [1:0]  nctx_m1,    // contexts in the round robin, less one
+    input  wire [26:0] ctx_pc,     // start addresses of contexts 1-3, 9 bits each from bit 0
+    output wire [1:0]  cur_ctx,    // the context whose slot this cycle is, for FIFO routing
 
     // Program memory. Read data arrives the cycle after the address.
     input  wire [15:0] mem_data,
@@ -36,7 +38,7 @@ module splice_engine (
     output wire        e2h_push,
 
     output reg         running,
-    output reg  [1:0]  halted,
+    output reg  [NCTX-1:0] halted,
     output reg         irq,
     output reg         trig,
     output wire        cap_on,
@@ -45,38 +47,44 @@ module splice_engine (
 );
 
   // ------------------------------------------------------------------ State, per context
-  reg [8:0]  pc      [0:1];
-  reg [8:0]  lr      [0:1];
-  reg [15:0] rr      [0:7];   // R0-R3 for each context
-  reg [15:0] sr      [0:1];
-  reg [4:0]  bc      [0:1];
-  reg [15:0] to      [0:1];
-  reg [15:0] to_left [0:1];
-  reg        to_act  [0:1];
-  reg [15:0] stall   [0:1];
-  reg        z       [0:1];
-  reg        f       [0:1];
-  reg        m       [0:1];   // a tick fired while the last was still pending, until JMP M reads it
-  reg        msb     [0:1];
-  reg [3:0]  side_ln [0:1];
-  reg [15:0] lfsr    [0:1];
-  reg [15:0] tp      [0:1];   // 16 bits from TSETR; TSET's constant fills the low 13
-  reg [16:0] tcnt    [0:1];   // one more, so TPHASE can start one and a half periods
-  reg [15:0] since   [0:1];   // cycles since the last tick, saturating
-  reg [15:0] tint    [0:1];   // cycles between the last two ticks, for TCAP
-  reg        pending [0:1];
-  reg [3:0]  ts_line [0:1];
-  reg [1:0]  ts_want [0:1];
-  reg [11:0] last    [0:1];   // what this context saw at its previous slot, for edge waits
-  reg [15:0] poly    [0:1];   // CRC polynomial, set by POLY
-  reg        lastb   [0:1];   // the bit last shifted by OUT, OUTB, IN or INB, which CRC steps on
+  reg [8:0]  pc      [0:NCTX-1];
+  reg [8:0]  lr      [0:NCTX-1];
+  reg [15:0] rr      [0:4*NCTX-1];   // R0-R3 for each context
+  reg [15:0] sr      [0:NCTX-1];
+  reg [4:0]  bc      [0:NCTX-1];
+  reg [15:0] to      [0:NCTX-1];
+  reg [15:0] to_left [0:NCTX-1];
+  reg        to_act  [0:NCTX-1];
+  reg [15:0] stall   [0:NCTX-1];
+  reg        z       [0:NCTX-1];
+  reg        f       [0:NCTX-1];
+  reg        m       [0:NCTX-1];   // a tick fired while the last was still pending, until JMP M reads it
+  reg        msb     [0:NCTX-1];
+  reg [3:0]  side_ln [0:NCTX-1];
+  reg [15:0] lfsr    [0:NCTX-1];
+  reg [15:0] tp      [0:NCTX-1];   // 16 bits from TSETR; TSET's constant fills the low 13
+  reg [16:0] tcnt    [0:NCTX-1];   // one more, so TPHASE can start one and a half periods
+  reg [15:0] since   [0:NCTX-1];   // cycles since the last tick, saturating
+  reg [15:0] tint    [0:NCTX-1];   // cycles between the last two ticks, for TCAP
+  reg        pending [0:NCTX-1];
+  reg [3:0]  ts_line [0:NCTX-1];
+  reg [1:0]  ts_want [0:NCTX-1];
+  reg [11:0] last    [0:NCTX-1];   // what this context saw at its previous slot, for edge waits
+  reg [15:0] poly    [0:NCTX-1];   // CRC polynomial, set by POLY
+  reg        lastb   [0:NCTX-1];   // the bit last shifted by OUT, OUTB, IN or INB, which CRC steps on
 
   reg        prim;            // first cycle of a run: only fetches
-  reg        cur;
+  localparam CW = NCTX > 2 ? 2 : 1;
+  reg [CW-1:0] cur;
+  /* verilator lint_off WIDTHTRUNC */
+  localparam [CW-1:0] LAST = NCTX - 1;
+  /* verilator lint_on WIDTHTRUNC */
+  wire [CW-1:0] cur_nx = (cur == nctx_m1[CW-1:0] || cur == LAST) ? {CW{1'b0}} : cur + 1'b1;
+  assign cur_ctx = cur;
   reg [11:0] eng;
   reg [23:0] src;
 
-  wire c = cur;
+  wire [CW-1:0] c = cur;
 
   // Only decode memory output while executing. It's undefined before the first read, and this keeps
   // that from reaching any logic, on silicon as well as in gate-level simulation.
@@ -87,10 +95,10 @@ module splice_engine (
   wire [15:0] plines = {4'hF, lines_prev};
 
   // ------------------------------------------------------------------ Tick sources, every cycle
-  wire [1:0] tick_now;
+  wire [NCTX-1:0] tick_now;
   genvar g;
   generate
-    for (g = 0; g < 2; g = g + 1) begin : ticks
+    for (g = 0; g < NCTX; g = g + 1) begin : ticks
       wire edge_seen = lines[ts_line[g]] != plines[ts_line[g]];
       assign tick_now[g] = (ts_want[g] != 2'd3)
           ? edge_seen && (ts_want[g] == 2'd2 || lines[ts_line[g]] == ts_want[g][0])
@@ -272,7 +280,8 @@ module splice_engine (
                       :             pc_inc;
   wire [8:0] pc_next = ex ? pc_taken : pc[c];
 
-  assign fetch_addr = prim ? pc[0] : (two_ctx ? pc[!c] : pc_next);
+  // With more than one context the next slot is another context's, and its PC is already settled.
+  assign fetch_addr = prim ? pc[0] : (nctx_m1 != 0 ? pc[cur_nx] : pc_next);
 
   // ------------------------------------------------------------------ Lines
   always @* begin
@@ -367,14 +376,14 @@ module splice_engine (
     if (rst) begin
       running <= start;
       prim <= start;
-      cur <= 1'b0;
-      halted <= 2'b00;
+      cur <= 0;
+      halted <= 0;
       irq <= 1'b0;
       trig <= 1'b0;
       eng <= 12'h0FF;
       src <= 24'd0;
-      for (i = 0; i < 2; i = i + 1) begin
-        pc[i] <= i == 0 ? 9'd0 : ctx1_pc;
+      for (i = 0; i < NCTX; i = i + 1) begin
+        pc[i] <= 9'd0;
         lr[i] <= 0;
         sr[i] <= 0;
         bc[i] <= 0;
@@ -399,14 +408,15 @@ module splice_engine (
         poly[i] <= 0;
         lastb[i] <= 0;
       end
-      for (i = 0; i < 8; i = i + 1) rr[i] <= 0;
+      for (i = 1; i < NCTX; i = i + 1) pc[i] <= ctx_pc[9 * i - 9 +: 9];
+      for (i = 0; i < 4 * NCTX; i = i + 1) rr[i] <= 0;
     end else begin
       trig <= 1'b0;
       eng <= eng_nx;
       src <= src_nx;
 
       // Timers run on every clock, for both contexts.
-      for (i = 0; i < 2; i = i + 1) begin
+      for (i = 0; i < NCTX; i = i + 1) begin
         if (ts_want[i] == 2'd3 && tp[i] != 0)
           tcnt[i] <= tcnt[i] <= 17'd1 ? {1'b0, tp[i]} : tcnt[i] - 17'd1;
         if (tick_now[i]) pending[i] <= 1'b1;
@@ -421,11 +431,10 @@ module splice_engine (
 
       if (prim) begin
         prim <= 1'b0;
-        last[0] <= lines_in;
-        last[1] <= lines_in;
+        for (i = 0; i < NCTX; i = i + 1) last[i] <= lines_in;
       end else if (running) begin
         last[c] <= lines_in;
-        if (two_ctx) cur <= !cur;
+        cur <= cur_nx;
 
         if (!halted[c]) begin
           if (stall[c] != 0) begin
@@ -501,7 +510,7 @@ module splice_engine (
       // A missed tick sets M, not F, so a timer left running can't pass for a full FIFO or a timeout.
       // It is visible next cycle and beats JMP M clearing it, so a deadline miss can never be silently
       // lost. This must stay after the instruction logic.
-      for (i = 0; i < 2; i = i + 1)
+      for (i = 0; i < NCTX; i = i + 1)
         if (tick_now[i] && pending[i]) m[i] <= 1'b1;
     end
   end
