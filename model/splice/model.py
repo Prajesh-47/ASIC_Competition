@@ -268,7 +268,7 @@ class Splice:
         if c.stall:
             c.stall -= 1
             return
-        op, f = decode(self.prog[c.pc & 0xFF])  # 256-word program macro
+        op, f = decode(self.prog[c.pc & 0x1FF])  # 512-word program macro
         if f.get("tick"):
             if not c.pending:
                 return

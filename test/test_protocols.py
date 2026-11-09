@@ -750,8 +750,25 @@ async def test_usb_ls_receive(dut):
 async def test_two_protocols_at_once(dut):
     """UART receive and SPI controller from one program, both running, each judged by its own device model."""
     await reset(dut)
+    await two_protocols(dut, firmware("two_protocols.s", BIT=40, HALF=10))
+
+
+@cocotb.test()
+async def test_program_above_word_256(dut):
+    """The same two protocols with all their code from word 300, which a 256-word program memory can't
+    hold: word 0 jumps there, and context 1 starts there, so both contexts fetch only above word 256."""
+    await reset(dut)
+    with open(os.path.join(HERE, "..", "model", "firmware", "two_protocols.s"), encoding="utf-8") as f:
+        source = f.read()
+    pad = "        jmp     high\n" + "        nop\n" * 299 + "high:\n"
+    prog = assemble(pad + source, {"BIT": 40, "HALF": 10})
+    assert prog.labels["top"] >= 300 and prog.ctx1 >= 300 and len(prog.words) > 310, \
+        f"{len(prog.words)} words, top {prog.labels['top']}, ctx1 {prog.ctx1}"
+    await two_protocols(dut, prog)
+
+
+async def two_protocols(dut, prog):
     bit, half = 40, 10
-    prog = firmware("two_protocols.s", BIT=bit, HALF=half)
     await load_program(dut, prog.words)
     await write_reg(dut, 0, 1)
     await write_reg(dut, 4, prog.ctx1 >> 8)
