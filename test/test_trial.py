@@ -1198,6 +1198,61 @@ async def test_sd_dat_line_fault(dut):
     assert 0xA505 in words, f"{[hex(w) for w in words]}"
 
 
+SD_LANES = "../../lab/explore/fw/sd_host_lanes.s"  # explore/isa-lanes-table: LANES and CRCW
+
+
+@cocotb.test()
+async def test_sd_lanes_read_write_and_crc(dut):
+    """The exploration firmware on RTL: a whole block each way at 25 MHz inside a word, and a flipped bit named."""
+    await reset(dut)
+    await sd_start(dut, program=SD_LANES)
+    card = SdCard()
+    words = await sd_run(dut, card, [(1, cmd_bytes(17, 0), 1, [])], cycles=150_000)
+    nibbles, tail = sd_block_from_words(words[4:264])
+    assert words[3] == 0xA000 and nibbles == block_nibbles(card.block), f"{[hex(w) for w in words[:5]]}"
+    assert tail == crc_nibbles(line_crcs(nibbles)) and words[264] == 0xA500, f"{hex(words[264])}"
+    dut._log.info(f"SD read, lanes: fastest clock {50 / min(sd_clock_periods(card.clock_edges)):.2f} MHz. "
+                  f"Whole block took {card.clock_edges[-1] - card.clock_edges[0]} cycles")
+    await sd_write_once(dut, SD_LANES)
+    await sd_start(dut, program=SD_LANES)
+    card = SdCard()
+    card.flip_read = 100
+    words = await sd_run(dut, card, [(1, cmd_bytes(17, 0), 1, [])], cycles=150_000)
+    assert words[264] == 0xC101, f"firmware CRC check: {hex(words[264])}"
+
+
+@cocotb.test()
+async def test_translate_uart_to_spi_through_mailbox(dut):
+    """explore/isa-lanes-table, ROUTE: UART bytes in on line 0 come out as SPI on lines 4-6, with no host."""
+    from test import capture
+    await reset(dut)
+    sent = [0x00, 0xFF, 0xA5, 0x3C, 0x81, 0x7E]
+    bit = 6
+    prog = firmware("../../lab/explore/fw/uart_to_spi.s", BIT=bit, HALF=2)
+    await stop(dut)
+    await load_program(dut, prog.words)
+    await write_reg(dut, 0, 1)  # two contexts
+    await write_reg(dut, 5, prog.ctx1)
+    await start(dut)
+    wave = [1] * 50
+    for b in sent:
+        wave += [0] * bit + [(b >> k) & 1 for k in range(8) for _ in range(bit)] + [1] * bit
+    wave += [1] * 400
+    trace = await capture(dut, len(wave), lambda t, out, oe: 0xFE | wave[t])
+    await stop(dut)
+    await write_reg(dut, 0, 0)
+    got, cur, prev = [], [], 0
+    for out, oe, _ in trace:
+        sck = (out >> 4) & 1
+        if sck and not prev:
+            cur.append((out >> 5) & 1)
+            if len(cur) == 8:
+                got.append(sum(b << (7 - k) for k, b in enumerate(cur)))
+                cur = []
+        prev = sck
+    assert got == sent, f"SPI carried {[hex(b) for b in got]}"
+
+
 # ------------------------------------------------------------------ 100BASE-TX, the expected limit
 CODE_4B5B = {0: 0x1E, 1: 0x09, 2: 0x14, 3: 0x15, 4: 0x0A, 5: 0x0B, 6: 0x0E, 7: 0x0F,
              8: 0x12, 9: 0x13, 10: 0x16, 11: 0x17, 12: 0x1A, 13: 0x1B, 14: 0x1C, 15: 0x1D}

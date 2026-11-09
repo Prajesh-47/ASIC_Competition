@@ -668,6 +668,7 @@ async def test_contexts_keep_their_own_crc_polynomial(dut):
 
 
 # ------------------------------------------------------------------ RTL against the golden model
+MODEL_ONLY = set()  # explore/isa-lanes-table: instructions in the model but not yet in RTL
 PARK_LINE = 11  # AUX_IN3: every random program waits for this line before doing anything else
 MASK_UO = 0xFE  # uo[0] is the host's MISO, which the model doesn't include
 COVERAGE = {}
@@ -687,14 +688,14 @@ def random_program(rng, length, ctx1):
     words += [encode("MODE", line=rng.randrange(8), src=rng.randrange(7), tick=0, dly=0),
               encode("TPHASE", mode=rng.randrange(4)),
               encode("TSRC", line=rng.randrange(12), want=rng.randrange(4))]
-    choices = list(TABLE)
+    choices = [op for op in TABLE if op not in MODEL_ONLY]
     while len(words) < length - 1:
         pc = len(words)
         if pc == ctx1:
             words.append(park)
             continue
         if rng.random() < 0.02:  # reserved encodings must behave as NOP
-            words.append(rng.choice([0xC400, 0xC800, 0xCC00, 0xA800, 0xB000, 0xE5C0, 0xEC00, 0xF000, 0xFFFF]))
+            words.append(rng.choice([0xC400, 0xC800, 0xCC00, 0xA800, 0xB000, 0xE5C0, 0xEC00, 0xED00, 0xEFFF]))
             continue
         op = rng.choice(choices)
         chance = rng.random()
@@ -734,9 +735,25 @@ def random_program(rng, length, ctx1):
                 and rng.random() < 0.5:
             # Few BC=0 jumps run at all, so set BC up for both outcomes rather than leave it to chance
             words.append(encode("BCI", n=0 if rng.random() < 0.5 else rng.randrange(1, 32)))
+        if op in ("LDP", "JMPR"):
+            # Both take an address from a register, so load one inside the program first: past it the memory
+            # holds whatever an earlier test left there, which the model doesn't know
+            r = fields["s"] & 3
+            fields["s"] = r
+            if pc + 1 == ctx1 or pc + 1 >= length - 1:
+                op, fields = "NOP", {"tick": 0, "side": 0}
+            else:
+                words.append(encode("LDI", r=r, hl=0, v=rng.randrange(1, length - 1)))
         words.append(encode(op, **fields))
     words.append(encode("JMP", c=COND["AL"], to=1))
     return words
+
+
+async def clear_program_memory(dut):
+    """LDP and JMPR can reach any address, and the model's memory past the program is zeros, so make the
+    chip's match. Earlier tests leave their programs behind."""
+    await stop(dut)
+    await load_program(dut, [0] * 256)
 
 
 def state_differences(dut, model):
@@ -752,7 +769,8 @@ def state_differences(dut, model):
             "msb": (int(c.msb), engine.msb[k]), "lfsr": (c.lfsr, engine.lfsr[k]),
             "side": (c.side_line, engine.side_ln[k]), "tsl": (c.tsrc_line, engine.ts_line[k]),
             "tsw": (c.tsrc_want, engine.ts_want[k]), "poly": (c.poly, engine.poly[k]),
-            "lastb": (c.lastb, engine.lastb[k]),
+            "lastb": (c.lastb, engine.lastb[k]), "lanes": (c.lanes.bit_length() - 1, engine.lw[k]),
+            "route": (c.route, engine.route[k]), "ldp": (int(c.ldp is not None), engine.ldp_pend[k]),
         }
         for r in range(4):
             pairs[f"R{r}"] = (c.R[r], engine.rr[k * 4 + r])
@@ -763,10 +781,13 @@ def state_differences(dut, model):
     cap = dut.user_project.capture
     for name, want, handle in (("cap.active", int(model.cap_active), cap.active), ("cap.ptr", model.cap_ptr, cap.ptr),
                                ("cap.dt", model.cap_dt, cap.dt), ("cap.pre", model.cap_pre, cap.pre),
-                               ("cap.triggered", int(model.cap_triggered), cap.triggered)):
+                               ("cap.triggered", int(model.cap_triggered), cap.triggered),
+                               ("mbox_full", int(bool(model.mbox)), engine.mbox_full)):
         value = int(handle.value)
         if value != want:
             diffs[name] = (want, value)
+    if model.mbox and int(engine.mbox.value) != model.mbox[0]:
+        diffs["mbox"] = (model.mbox[0], int(engine.mbox.value))
     return diffs
 
 
@@ -882,6 +903,7 @@ async def differential_once(dut, seed, cycles, two):
 async def test_rtl_matches_model_one_context(dut):
     """Random programs at full rate: every output pin, every cycle."""
     await reset(dut)
+    await clear_program_memory(dut)
     runs, cycles = (3, 300) if GATE_LEVEL else (40, 800)
     for seed in range(runs):
         await differential_once(dut, 1000 + seed, cycles, False)
@@ -891,6 +913,7 @@ async def test_rtl_matches_model_one_context(dut):
 async def test_rtl_matches_model_two_contexts(dut):
     """The same at half rate, with both contexts running their own code."""
     await reset(dut)
+    await clear_program_memory(dut)
     runs, cycles = (3, 300) if GATE_LEVEL else (40, 800)
     for seed in range(runs):
         await differential_once(dut, 2000 + seed, cycles, True)
@@ -899,7 +922,7 @@ async def test_rtl_matches_model_two_contexts(dut):
 @cocotb.test()
 async def test_differential_covered_every_instruction(dut):
     """Passing means nothing for instructions that never ran, so check that they did."""
-    unused = sorted(op for op in TABLE if op not in COVERAGE and op != "HALT")
+    unused = sorted(op for op in TABLE if op not in COVERAGE and op != "HALT" and op not in MODEL_ONLY)
     bins = [f"JMP.{c}.{r}" for c in COND.values() for r in ("taken", "not") if (c, r) != (0, "not")]
     bins += [f"WAIT.{c}.{r}" for c in WAITC.values() for r in ("met", "timeout")]
     bins += [f"MODE.{s}" for s in SRC.values()] + [f"TPHASE.{m}" for m in PHASE.values()]

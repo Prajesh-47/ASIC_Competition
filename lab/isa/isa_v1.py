@@ -28,7 +28,13 @@ EXTENSIONS = {
     "ADDR": ("11100110", {"d": 2, "s": 3}),   # Rd += operand: the trial's LIN checksum
     "TSETR": ("11100111", {"s": 3}),          # 16-bit timer period from a register: LIN auto-baud, DALI
     "POLY": ("11101000", {"s": 3}),           # CRC polynomial from a register, so it doesn't hold one
-    "CRC": ("11101001", {"r": 2, "dir": 1}),  # one CRC step on the bit last shifted: SD, CAN, USB, HDLC
+    "CRC": ("11101001", {"r": 2, "dir": 1, "word": 1, "lane": 3}),  # one CRC step on the bit last shifted,
+                                              # or (explore) a whole word of one lane: SD, CAN, USB, HDLC
+    # explore/isa-lanes-table: not approved, prototyped in the model only
+    "JMPR": ("11101010", {"s": 3}),           # computed jump to an operand
+    "LANES": ("11101011", {"w": 2}),          # OUT/IN/OUTB/INB move 1, 2, 4 or 8 lines at once
+    "ROUTE": ("11101100", {"m": 2}),          # PUSH and/or PULL go through a mailbox between the contexts
+    "LDP": ("11101101", {"d": 2, "s": 2}),    # table read: Rd = program word at address Rs
 }
 
 # Listed in the order the map should read: frequent, wide formats first.
