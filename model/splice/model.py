@@ -27,6 +27,8 @@ class Context:
         self.side_line = 15
         self.lfsr = 0xACE1
         self.tp = self.tcnt = 0
+        self.since = 0xFFFF  # cycles since the last tick, saturating. TCAP reads the latched interval
+        self.tint = 0xFFFF
         self.pending = False
         self.tick_now = False
         self.missed = False
@@ -228,6 +230,10 @@ class Splice:
                 c.tick_now = True
             else:
                 c.tcnt -= 1
+        if c.tick_now:  # latch the time between this tick and the one before, so firmware can read it late
+            c.tint, c.since = min(c.since + 1, 0xFFFF), 0
+        else:
+            c.since = min(c.since + 1, 0xFFFF)
         c.missed = c.tick_now and c.pending
         if c.tick_now:
             c.pending = True
@@ -393,6 +399,11 @@ class Splice:
             c.Z = int(c.R[f["d"]] == 0)
         elif op == "CMP":
             c.Z = int(self.read(c, f["a"]) == self.read(c, f["b"]))
+        elif op == "CMPU":  # unsigned: Z if equal, F if a < b
+            a, b = self.read(c, f["a"]), self.read(c, f["b"])
+            c.Z, c.F = int(a == b), int(a < b)
+        elif op == "TCAP":  # with .t: wait for a tick, then read the interval that ended at it
+            c.R[f["r"]] = c.tint
         elif op == "CMPI":
             c.Z = int(c.R[f["a"]] == f["v"])
         elif op == "SHR":

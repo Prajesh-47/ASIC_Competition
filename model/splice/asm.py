@@ -178,8 +178,10 @@ def _translate(mnemonic, args, flags, named, names, labels, pc, final):
         return [(op, {"d": reg(args[0]), "s": key(OPERAND, args[1])})]
     if op == "MOV":
         return [(op, {"d": key(OPERAND, args[0]), "s": key(OPERAND, args[1])})]
-    if op == "CMP":
+    if op in ("CMP", "CMPU"):
         return [(op, {"a": key(OPERAND, args[0]), "b": key(OPERAND, args[1])})]
+    if op == "TCAP":
+        return [(op, {"r": reg(args[0]), "tick": tick})]
     if op in ("BCI", "PULLW"):
         return [(op, {"n": num(args[0])})]
     if op == "MSB":

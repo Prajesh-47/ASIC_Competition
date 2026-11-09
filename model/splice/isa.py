@@ -52,6 +52,9 @@ TABLE = {
     "TSETR": ("11100111", (("s", 3),)),
     "POLY": ("11101000", (("s", 3),)),
     "CRC": ("11101001", (("r", 2), ("dir", 1))),
+    # Exploration (explore/scout-edge-timing), not approved: edge-interval capture and an unsigned compare
+    "CMPU": ("11101010", (("a", 3), ("b", 3))),
+    "TCAP": ("11101011", (("r", 2), ("tick", 1))),
     "RAND": ("1110010100", (("r", 2),)),
     "SHL": ("1110010101", (("r", 2),)),
     "SHR": ("1110010110", (("r", 2),)),
