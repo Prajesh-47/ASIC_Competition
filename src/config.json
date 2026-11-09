@@ -25,6 +25,11 @@
   "//": "gave the same result to the digit (gds 42514384860, 0.52 ns), even with 0.5 ns margins (42514387564).",
   "TIMING_VIOLATION_CORNERS": ["*typ*", "*slow*"],
 
+  "//": "Experiment (explore/flow-prog512): repair setup to well above the slack the build gets. The resizer",
+  "//": "stops once slack passes the margin, and 0.5 ns margins did nothing on exp/isa-crc (slack was 0.52).",
+  "PL_RESIZER_SETUP_SLACK_MARGIN": 3.0,
+  "GRT_RESIZER_SETUP_SLACK_MARGIN": 2.0,
+
   "//": "Repair slew and capacitance to wider margins, and buffer any wire over 200 um (exp/slew-margin-wire,",
   "//": "gds run 42508009377): slew violations 0 from 63, cap 0 from 23, setup slack 3.66 ns from 2.41, at",
   "//": "7.6% more standard-cell area. The estimates before routing missed the long routes to the macros.",
