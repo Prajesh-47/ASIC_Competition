@@ -155,8 +155,23 @@ def _translate(mnemonic, args, flags, named, names, labels, pc, final):
         return [(op, {"p": num(args[0])})]
     if op == "POLY":
         return [(op, {"s": key(OPERAND, args[0])})]
-    if op == "CRC":
-        return [(op, {"r": reg(args[0]), "dir": key(CRCDIR, args[1])})]
+    if op in ("CRC", "CRCW"):  # crc r, msb[, lane]: the bit last shifted. crcw r, msb, lane: a word of SR
+        lane = num(args[2]) if len(args) > 2 else 0
+        return [("CRC", {"r": reg(args[0]), "dir": key(CRCDIR, args[1]), "word": int(op == "CRCW"), "lane": lane})]
+    if op == "ROUTE":  # route push, route pull, route both, route off
+        modes = {"OFF": 0, "PUSH": 1, "PULL": 2, "BOTH": 3}
+        return [(op, {"m": key(modes, args[0])})]
+    if op == "LANES":
+        width = num(args[0])
+        if width not in (1, 2, 4, 8):
+            raise AsmError("lanes takes 1, 2, 4 or 8")
+        return [(op, {"w": width.bit_length() - 1})]
+    if op == "LDP":  # ldp rd, rs: rd = program word at the address in rs. Add the table's address first
+        return [(op, {"d": reg(args[0]), "s": reg(args[1])})]
+    if op == "JMPR":
+        return [(op, {"s": key(OPERAND, args[0])})]
+    if op == ".WORD":
+        return [("WORD", {"v": num(a) & 0xFFFF}) for a in args]
     if op == "TPHASE":
         return [(op, {"mode": key(PHASE, args[0])})]
     if op == "TSRC":
@@ -244,6 +259,8 @@ def assemble(source, defines=None):
                         names[name.strip()] = evaluate(value, names)
                 elif line.startswith(".ctx1"):
                     ctx1_label = line[5:].strip()
+                elif line.startswith(".") and not line.startswith(".word"):
+                    pass
                 else:
                     pc += len(_translate(*_args(line), names, labels, pc, False))
             except (AsmError, IndexError) as err:
@@ -259,11 +276,11 @@ def assemble(source, defines=None):
             if labels[line[:-1]] != pc:  # a wrong label would silently misdirect a jump
                 raise AsmError(f"line {number}: label {line[:-1]} moved from {labels[line[:-1]]} to {pc}")
             continue
-        if line.startswith("."):
+        if line.startswith(".") and not line.startswith(".word"):
             continue
         try:
             for op, fields in _translate(*_args(line), names, labels, pc, True):
-                word = encode(op, **fields)
+                word = fields["v"] if op == "WORD" else encode(op, **fields)
                 words.append(word)
                 listing.append((pc, word, line, number))
                 pc += 1
@@ -283,6 +300,8 @@ def assemble(source, defines=None):
 
 
 def _args(line):
+    if line.startswith(".word"):  # raw data words, for tables read with LDP
+        return ".word", [a.strip() for a in line[5:].split(",") if a.strip()], {}, {}
     mnemonic, flags, named, args = _parse(line)
     return mnemonic, args, flags, named
 

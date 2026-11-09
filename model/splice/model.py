@@ -34,12 +34,16 @@ class Context:
         self.missed = False
         self.tsrc_line, self.tsrc_want = 0, 3
         self.poly = 0
-        self.lastb = 0  # the bit most recently shifted by OUT, OUTB, IN or INB, for CRC
+        self.lastb = 0  # the bit (lane group) most recently shifted by OUT, OUTB, IN or INB, for CRC
+        self.ldp = None  # LDP waiting for its word: (register, address)
+        self.route = 0  # ROUTE: bit 0 PUSH to the mailbox, bit 1 PULL from it
+        self.lanes = 1  # LANES: how many lines one OUT, IN, OUTB or INB moves, 1, 2, 4 or 8
         self.last = [1] * 12
 
 
 class Splice:
     FIFO_DEPTH = 8
+    MBOX_DEPTH = 1
 
     def __init__(self):
         self.prog = [0] * 512
@@ -84,6 +88,7 @@ class Splice:
         self.bridge = [["IDLE", 0] for _ in range(4)]
         self.out = [0] * 8
         self.oe = [0] * 8
+        self.mbox = []
         self.irq = 0
         self.trig = 0
 
@@ -248,12 +253,31 @@ class Splice:
     def sbit(self, c):
         return (c.SR >> 15) & 1 if c.msb else c.SR & 1
 
+    def group_out(self, c):
+        """The next lane group from SR: the top W bits in MSB order, the bottom W in LSB order."""
+        w = c.lanes
+        return (c.SR >> (16 - w)) & ((1 << w) - 1) if c.msb else c.SR & ((1 << w) - 1)
+
+    def group_in(self, c, line):
+        """W lines from the lane-aligned base: line base + k is bit k of the group."""
+        w = c.lanes
+        base = line & ~(w - 1)
+        return sum(self.line(base + k) << k for k in range(w))
+
+    def drive_group(self, c, line, group):
+        w = c.lanes
+        base = line & ~(w - 1)
+        for k in range(w):
+            self.drive(base + k, (group >> k) & 1)
+
     def shift_out(self, c):
-        c.SR = (c.SR << 1) & MASK if c.msb else c.SR >> 1
+        w = c.lanes
+        c.SR = (c.SR << w) & MASK if c.msb else c.SR >> w
         c.BC = max(c.BC - 1, 0)
 
-    def shift_in(self, c, bit):
-        c.SR = ((c.SR << 1) | bit) & MASK if c.msb else (c.SR >> 1) | (bit << 15)
+    def shift_in(self, c, group):
+        w = c.lanes
+        c.SR = ((c.SR << w) | group) & MASK if c.msb else (c.SR >> w) | (group << (16 - w))
         c.BC = max(c.BC - 1, 0)
 
     def read(self, c, code):
@@ -267,6 +291,9 @@ class Splice:
             return
         if c.stall:
             c.stall -= 1
+            if c.ldp:  # LDP's word arrives in the slot after it, in place of an instruction
+                d, addr = c.ldp
+                c.R[d], c.ldp = self.prog[addr], None
             return
         op, f = decode(self.prog[c.pc & 0xFF])  # 256-word program macro
         if f.get("tick"):
@@ -283,21 +310,21 @@ class Splice:
         elif op == "MODE":
             self.src[f["line"]] = f["src"]
         elif op == "OUT":
-            c.lastb = self.sbit(c)
-            self.drive(f["line"], c.lastb)
+            c.lastb = self.group_out(c)
+            self.drive_group(c, f["line"], c.lastb)
             if not f["ns"]:
                 self.shift_out(c)
         elif op == "IN":
-            c.lastb = self.line(f["line"])
+            c.lastb = self.group_in(c, f["line"])
             self.shift_in(c, c.lastb)
         elif op == "OUTB":
-            c.lastb = self.sbit(c)
-            self.drive(f["line"], c.lastb)
+            c.lastb = self.group_out(c)
+            self.drive_group(c, f["line"], c.lastb)
             self.shift_out(c)
             if c.BC:
                 next_pc = (c.pc - f["rel"]) & 0x1FF
         elif op == "INB":
-            c.lastb = self.line(f["line"])
+            c.lastb = self.group_in(c, f["line"])
             self.shift_in(c, c.lastb)
             if c.BC:
                 next_pc = (c.pc - f["rel"]) & 0x1FF
@@ -338,19 +365,24 @@ class Splice:
         elif op == "DLYR":
             dly = c.R[f["r"]]
         elif op == "PULL":
-            if self.h2e:
-                c.SR, c.F = self.h2e.pop(0), 0
+            src = self.mbox if c.route & 2 else self.h2e
+            if src:
+                c.SR, c.F = src.pop(0), 0
             else:
                 c.F = 1
         elif op == "PULLW":
-            if not self.h2e:
+            src = self.mbox if c.route & 2 else self.h2e
+            if not src:
                 return
-            c.SR, c.BC = self.h2e.pop(0), f["n"]
+            c.SR, c.BC = src.pop(0), f["n"]
         elif op == "PUSH":
-            if len(self.e2h) < self.FIFO_DEPTH:
-                self.e2h.append(c.SR)
+            dst, depth = (self.mbox, self.MBOX_DEPTH) if c.route & 1 else (self.e2h, self.FIFO_DEPTH)
+            if len(dst) < depth:
+                dst.append(c.SR)
             else:
                 c.F = 1
+        elif op == "ROUTE":  # mailbox between the contexts: bit 0 sends PUSH to it, bit 1 takes PULL from it
+            c.route = f["m"]
         elif op == "BCI":
             c.BC = f["n"]
         elif op == "SRI":
@@ -381,16 +413,35 @@ class Splice:
             c.Z = int(c.R[f["d"]] == 0)
         elif op == "POLY":
             c.poly = self.read(c, f["s"])
-        elif op == "CRC":  # one step on the bit last shifted
-            v = c.R[f["r"]]
-            if f["dir"]:
-                fb = ((v >> 15) & 1) ^ c.lastb
-                v = ((v << 1) & MASK) ^ (c.poly if fb else 0)
+        elif op == "CRC":  # one step on the bit last shifted, or a whole word of one lane from SR
+            v, poly, w = c.R[f["r"]], c.poly, c.lanes
+            if f["word"]:
+                # One lane's bits in SR, oldest first, in one cycle: 4 steps at stride 4, or 2 at stride 8
+                # with 8 lanes. Below 4 lanes it still uses stride 4, which only makes sense for 4 lanes.
+                stride = max(w, 4)
+                n = 16 // stride
+                if c.msb:
+                    bits = [(c.SR >> (16 - stride * (j + 1) + f["lane"])) & 1 for j in range(n)]
+                else:
+                    bits = [(c.SR >> (stride * j + f["lane"])) & 1 for j in range(n)]
             else:
-                fb = (v & 1) ^ c.lastb
-                v = (v >> 1) ^ (c.poly if fb else 0)
+                bits = [(c.lastb >> f["lane"]) & 1]
+            for b in bits:
+                if f["dir"]:
+                    fb = ((v >> 15) & 1) ^ b
+                    v = ((v << 1) & MASK) ^ (poly if fb else 0)
+                else:
+                    fb = (v & 1) ^ b
+                    v = (v >> 1) ^ (poly if fb else 0)
             c.R[f["r"]] = v
             c.Z = int(v == 0)
+        elif op == "LANES":
+            c.lanes = 1 << f["w"]
+        elif op == "LDP":  # a program word as data, at the address in Rs. The read takes a second slot
+            c.ldp = (f["d"], c.R[f["s"]] & 0xFF)
+            dly = 1
+        elif op == "JMPR":
+            next_pc = self.read(c, f["s"]) & 0x1FF
         elif op == "XOR":
             c.R[f["d"]] ^= self.read(c, f["s"])
             c.Z = int(c.R[f["d"]] == 0)
@@ -456,6 +507,12 @@ class Splice:
             self.cover(f"TPHASE.{f['mode']}")
         elif op == "TSRC":
             self.cover(f"TSRC.{f['want']}")
+        if op in ("OUT", "IN", "OUTB", "INB"):
+            self.cover(f"{op}.w{c.lanes}")
+        elif op == "CRC" and f["word"]:
+            self.cover(f"CRCW.w{c.lanes}")
+        if op in ("PUSH", "PULL") and c.route & (1 if op == "PUSH" else 2):
+            self.cover(f"ROUTE.{op}")
         if f.get("tick"):
             self.cover(f"{op}.t")
         c.pc = next_pc

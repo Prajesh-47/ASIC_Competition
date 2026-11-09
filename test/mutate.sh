@@ -1,6 +1,7 @@
 #!/bin/bash
 # Mutation check: deliberately break the RTL, and confirm the tests notice. Run from test/.
-# A mutant that survives points at a gap in the tests. ONLY=regex runs a subset.
+# A mutant that survives points at a gap in the tests. ONLY=regex runs a subset. MAKE_ARGS is passed to
+# make, for example MAKE_ARGS=COCOTB_TEST_MODULES=test to run one module.
 SRC=$(cd ../src && pwd)
 OUT=${1:-mutation_results.txt}
 : > "$OUT"
@@ -20,7 +21,7 @@ PY
   then echo "NOT APPLIED  $name" | tee -a "$OUT"; rm -rf "$dir"; return; fi
   rm -rf sim_build results.xml
   # A mutant can make a test loop forever. Never finishing counts as caught, since the real suite finishes.
-  timeout "${MUTANT_LIMIT:-1200}" make SRC_DIR="$dir" >/dev/null 2>&1
+  timeout "${MUTANT_LIMIT:-1200}" make SRC_DIR="$dir" $MAKE_ARGS >/dev/null 2>&1
   if [ $? -eq 124 ]; then
     echo "caught(hang) $name" | tee -a "$OUT"
     rm -rf "$dir"
@@ -38,7 +39,7 @@ E=splice_engine.v; T=tt_um_prajesh47_splice.v; H=splice_host.v
 run "OUT always shifts (ignores ns)" $E "wire sr_out = (is_out && !ins[6]) || is_outb;" "wire sr_out = is_out || is_outb;"
 run "taken jump goes one word late" $E "wire [8:0] pc_taken = to_target ? ins[8:0]" "wire [8:0] pc_taken = to_target ? ins[8:0] + 9'd1"
 run "JMP BC!=0 tests BC==0" $E "3'd6: take_jmp = bc[c] != 0;" "3'd6: take_jmp = bc[c] == 0;"
-run "delay one cycle short" $E "is_dlyr ? alu_reg : {12'd0, dly_field};" "is_dlyr ? alu_reg : ({12'd0, dly_field} == 0 ? 16'd0 : {12'd0, dly_field} - 16'd1);"
+run "delay one cycle short" $E "is_ldp ? 16'd1 : {12'd0, dly_field};" "is_ldp ? 16'd1 : ({12'd0, dly_field} == 0 ? 16'd0 : {12'd0, dly_field} - 16'd1);"
 run "timer period off by one" $E "{1'b0, tp[i]} : tcnt[i] - 17'd1" "{1'b0, tp[i]} + 17'd1 : tcnt[i] - 17'd1"
 run "half phase wrong" $E "2'd1: tcnt[c] <= phase_half - 17'd1;" "2'd1: tcnt[c] <= phase_half;"
 run "ADDR adds only the low byte" $E "wire [15:0] alu_addr = rr[{c, rn_alu}] + opnd_alu;" "wire [15:0] alu_addr = rr[{c, rn_alu}] + {8'd0, opnd_alu[7:0]};"
@@ -46,13 +47,11 @@ run "ADDR doesn't set Z" $E "(is_addr && alu_addr == 0) ||" ""
 run "TSETR cut to 13 bits" $E "tp[c] <= opnd_cmp;" "tp[c] <= {3'd0, opnd_cmp[12:0]};"
 run "TSETR keeps the old tick pending" $E "tcnt[c] <= {1'b0, opnd_cmp};
                 pending[c] <= 1'b0;" "tcnt[c] <= {1'b0, opnd_cmp};"
-run "CRC always shifts left" $E "wire        crc_fb   = (ins[5] ? crc_reg[15] : crc_reg[0]) ^ lastb[c];
-  wire [15:0] alu_crc  = (ins[5] ?" "wire        crc_fb   = crc_reg[15] ^ lastb[c];
-  wire [15:0] alu_crc  = (1'b1 ?"
-run "CRC ignores the shifted bit" $E "crc_reg[0]) ^ lastb[c];" "crc_reg[0]);"
-run "IN doesn't record the bit for CRC" $E "if (is_in || is_inb) lastb[c] <= in_bit;" ";"
-run "OUT doesn't record the bit for CRC" $E "if (is_out || is_outb) lastb[c] <= sbit;" ";"
-run "contexts share a polynomial" $E "({16{crc_fb}} & poly[c])" "({16{crc_fb}} & poly[0])"
+run "CRC always shifts left" $E "wire        crc_dir  = ins[5];" "wire        crc_dir  = 1'b1;"
+run "CRC ignores the shifted bit" $E "ins[4] ? crc_bits[3] : lastb_c[crc_lane]" "ins[4] ? crc_bits[3] : 1'b0"
+run "IN doesn't record the bit for CRC" $E "if (is_in || is_inb) lastb[c] <= grp_in;" ";"
+run "OUT doesn't record the bit for CRC" $E "if (is_out || is_outb) lastb[c] <= grp_out;" ";"
+run "contexts share a polynomial" $E "wire [15:0] poly_c   = poly[c];" "wire [15:0] poly_c   = poly[0];"
 run "TPHASE R1 cut to 14 bits" $E "default: tcnt[c] <= {1'b0, rr[{c, 2'd1}]};" "default: tcnt[c] <= {3'd0, rr[{c, 2'd1}][13:0]};"
 run "tcap: TCAP.t reads the interval before its tick" $E "wire [15:0] tint_now = tick_now[c] ? since_inc : tint[c];" "wire [15:0] tint_now = tint[c];"
 run "tcap: interval one short" $E "wire [15:0] since_inc = since[c] == 16'hFFFF ? 16'hFFFF : since[c] + 16'd1;" "wire [15:0] since_inc = since[c];"
@@ -69,13 +68,13 @@ run "side-set applies before its tick" $E "wire active = gated && (!tick_q || pe
 run "falling edge wait acts as rising" $E "default: wait_met = wait_was && !wait_bit;" "default: wait_met = !wait_was && wait_bit;"
 run "WAIT timeout never expires" $E "wire        to_expired = to_on && to_dec == 0;" "wire        to_expired = 1'b0;"
 run "SHR doesn't set F" $E "(is_shr && sft_reg[0]) ||" ""
-run "MSB-first IN shifts wrong way" $E "msb[c] ? {sr[c][14:0], in_bit} : {in_bit, sr[c][15:1]}" "{in_bit, sr[c][15:1]}"
+run "MSB-first IN shifts wrong way" $E "sr_shifted_in = msb_c ? {sr_c[14:0], grp_in[0]} : {grp_in[0], sr_c[15:1]};" "sr_shifted_in = {grp_in[0], sr_c[15:1]};"
 run "RET returns to the wrong place" $E "if (is_call) lr[c] <= pc_inc;" "if (is_call) lr[c] <= pc[c];"
 run "contexts share a link register" $E ": is_ret    ? lr[c]" ": is_ret    ? lr[0]"
 run "context 1 return address not saved" $E "if (is_call) lr[c]" "if (is_call) lr[0]"
 run "edge memory shared by contexts" $E "last[c] <= lines_in;" "begin last[0] <= lines_in; last[1] <= lines_in; end"
 run "LFSR taps wrong" $E "16'hB400" "16'hB401"
-run "PUSH full doesn't set F" $E "(is_push && e2h_full) || is_shift" "is_shift"
+run "PUSH full doesn't set F" $E "(is_push && out_full) || is_shift" "is_shift"
 run "INV acts as PASS" $T "3'd3: {line_oe[x], line_out[x]} <= {!(!level[x] && odrain[x]), !level[x] && !odrain[x]};" "3'd3: {line_oe[x], line_out[x]} <= {!(level[x] && odrain[x]), level[x] && !odrain[x]};"
 run "open-drain drives high" $T "3'd1: {line_oe[x], line_out[x]} <= {!(eng_nx[x] && odrain[x]), eng_nx[x] && !odrain[x]};" "3'd1: {line_oe[x], line_out[x]} <= {1'b1, eng_nx[x]};"
 run "fast pass-through ignored" $T "wire [7:0] level = (fast & partner_fast) | (~fast & partner);" "wire [7:0] level = partner;"
@@ -95,7 +94,7 @@ run "hostlink: STATUS level byte is 0" $H "if (phase == 1) tx <= fifo_level;" "i
 run "hostlink: free space one short" $T "FIFO_WORDS - {1'b0, h2e_level}" "FIFO_WORDS - {1'b0, h2e_level} - 9'd1"
 run "hostlink: level one high" splice_fifo.v "8'd255 : count16[7:0];" "8'd255 : count16[7:0] + 8'd1;"
 run "empty FIFO returns stale data" splice_fifo.v "empty ? 16'd0 : mem[rp[DEPTH_LOG2-1:0]]" "mem[rp[DEPTH_LOG2-1:0]]"
-run "CMP ignores its second operand" $E "(is_cmp && opnd_cmp == opnd_mov)" "(is_cmp && opnd_cmp == 16'd0)"
+run "CMP ignores its second operand" $E "((is_cmp || is_cmpu) && opnd_cmp == opnd_mov)" "((is_cmp && opnd_cmp == 16'd0) || (is_cmpu && opnd_cmp == opnd_mov))"
 run "AND acts as XOR" $E "({16{is_and}} & alu_and)" "({16{is_and}} & alu_xor)"
 C=splice_capture.v
 B=splice_bridge.v
@@ -119,5 +118,35 @@ run "bridge drives the wrong side" $B "assign low_a_nx = state_nx == B_HOLDS;" "
 run "bridge ignores B" $B "else if (!line_b) state_nx = B_HOLDS;" ";"
 run "bridge holdoff ignores the register" $T ".holdoff (holdoff)," ".holdoff (8'd2),"
 run "RAND seed ignored" $E "if (is_rand || (is_mov && ins[7:5] == 3'd7)) lfsr[c] <= is_rand ? lfsr_nx : mov_val;" "if (is_rand) lfsr[c] <= lfsr_nx;"
+# explore/isa-lanes-int: LANES, CRCW, LDP, JMPR and ROUTE
+run "lanes: LANES ignored" $E "if (is_lanes) lw[c] <= ins[7:6];" ";"
+run "lanes: contexts share a width" $E "wire [1:0]  lw_c = lw[c];" "wire [1:0]  lw_c = lw[0];"
+run "lanes: 2-lane IN swaps its lines" $E "grp_in = {6'd0, lines[{ln_a[3:1], 1'b0} +: 2]};" "grp_in = {6'd0, lines[{ln_a[3:1], 1'b0}], lines[{ln_a[3:1], 1'b1}]};"
+run "lanes: 4-lane shift moves 3 bits" $E "sr_shifted_out = msb_c ? {sr_c[11:0], 4'd0} : {4'd0, sr_c[15:4]};" "sr_shifted_out = msb_c ? {sr_c[12:0], 3'd0} : {3'd0, sr_c[15:3]};"
+run "lanes: 4-lane LSB-first IN fills the wrong end" $E "sr_shifted_in = msb_c ? {sr_c[11:0], grp_in[3:0]} : {grp_in[3:0], sr_c[15:4]};" "sr_shifted_in = {sr_c[11:0], grp_in[3:0]};"
+run "lanes: 8-lane IN always takes the low byte" $E "grp_in = ln_a[3] ? lines[15:8] : lines[7:0];" "grp_in = lines[7:0];"
+run "lanes: OUT drives only the named line" $E "if ((l >> lw_c) == (ln_a >> lw_c))" "if (l == ln_a)"
+run "lanes: CRCW at 8 lanes uses stride 4" $E "wire        crc_wide = lw_c == 2'd3;" "wire        crc_wide = 1'b0;"
+run "lanes: CRCW takes bits newest first" $E "crc_bits = msb_c ? {sr_pad[12 + crc_lane]" "crc_bits = !msb_c ? {sr_pad[12 + crc_lane]"
+run "lanes: CRCW does 3 steps" $E "wire [15:0] crc_s4   = crc_step(crc_step(crc_s2, crc_bits[1], crc_dir, poly_c), crc_bits[0], crc_dir, poly_c);" "wire [15:0] crc_s4   = crc_step(crc_s2, crc_bits[1], crc_dir, poly_c);"
+run "lanes: CRC ignores its lane" $E "ins[4] ? crc_bits[3] : lastb_c[crc_lane]" "ins[4] ? crc_bits[3] : lastb_c[0]"
+run "lanes: CRCW acts as one CRC step" $E "wire [15:0] alu_crc  = !ins[4] ? crc_s1" "wire [15:0] alu_crc  = 1'b1 ? crc_s1"
+run "ldp: word lands in R0" $E "rr[{c, ldp_dst[c]}] <= mem_data;" "rr[{c, 2'd0}] <= mem_data;"
+run "ldp: one context reads the next instruction" $E ": (ex && is_ldp) ? ldp_src : pc_next;" ": pc_next;"
+run "ldp: two contexts read the other's instruction" $E "two_ctx ? (ldp_pend[!c] ? ldp_addr[!c] : pc[!c])" "two_ctx ? pc[!c]"
+run "ldp: address from the wrong register" $E "wire [8:0] ldp_src = rr[{c, ins[5:4]}][8:0];" "wire [8:0] ldp_src = rr[{c, ins[7:6]}][8:0];"
+run "ldp: no second slot" $E "is_ldp ? 16'd1 :" "is_ldp ? 16'd0 :"
+run "jmpr: lands one word late" $E ": is_jmpr   ? opnd_cmp[8:0]" ": is_jmpr   ? opnd_cmp[8:0] + 9'd1"
+run "jmpr: jumps to the wrong operand" $E ": is_jmpr   ? opnd_cmp[8:0]" ": is_jmpr   ? opnd_mov[8:0]"
+run "route: ROUTE ignored" $E "if (is_route) route[c] <= ins[7:6];" ";"
+run "route: contexts share a route" $E "wire        rt_push = route[c][0];
+  wire        rt_pull = route[c][1];" "wire        rt_push = route[0][0];
+  wire        rt_pull = route[0][1];"
+run "route: full mailbox is overwritten" $E "wire   mbox_put = ex && is_push && rt_push && !mbox_full;" "wire   mbox_put = ex && is_push && rt_push;"
+run "route: full mailbox doesn't set F" $E "wire        out_full = rt_push ? mbox_full : e2h_full;" "wire        out_full = rt_push ? 1'b0 : e2h_full;"
+run "route: PULL leaves the mailbox full" $E "if (mbox_take) mbox_full <= 1'b0;" ";"
+run "route: routed PUSH reaches the host too" $E "assign e2h_push = ex && is_push && !rt_push;" "assign e2h_push = ex && is_push;"
+run "route: routed PULL pops the host too" $E "assign h2e_pop = take_in && !rt_pull;" "assign h2e_pop = take_in;"
+run "route: routed PULLW waits on the host" $E "|| (is_pullw && in_empty);" "|| (is_pullw && h2e_empty);"
 rm -rf sim_build results.xml
 echo done | tee -a "$OUT"

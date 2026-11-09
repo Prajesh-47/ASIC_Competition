@@ -203,11 +203,15 @@ The qualifier `.t` on an instruction means: wait for the next tick, then execute
 | `11100110` | `ADDR` | d 2, s 3 |
 | `11100111` | `TSETR` | s 3 |
 | `11101000` | `POLY` | s 3 |
-| `11101001` | `CRC` | r 2, dir 1 |
+| `11101001` | `CRC` | r 2, dir 1, word 1, lane 3 |
 | `11101010` | `CMPU` | a 3, b 3 |
 | `11101011` | `TCAP` | r 2, tick 1 |
+| `11101100` | `ROUTE` | m 2 |
+| `11101101` | `LDP` | d 2, s 2 |
+| `11101110` | `JMPR` | s 3 |
+| `11101111` | `LANES` | w 2 |
 
-Field names: `line` 0–7 is a bus line and 8–11 is AUX; `side` is enable and value; `rel` branches back up to 15 words; `to` is an absolute address, 9 bits so the 512-word macro needs no ISA change, though the 256-word macro uses 8; `hl` selects `LDI`'s high or low byte; `sh` is `SRI`'s shift. The `stamp` bit in `WAIT` is held for the capture unit. `ADDR`, `TSETR`, `POLY` and `CRC` were added after v1 in free codes, so no opcode moved. The assembler picks `ADDR` and `TSETR` when the operand is a register: `add r0, r1`, `tset r1`. About 8.7% of the encoding space is still free.
+Field names: `line` 0–7 is a bus line and 8–11 is AUX; `side` is enable and value; `rel` branches back up to 15 words; `to` is an absolute address, 9 bits so the 512-word macro needs no ISA change, though the 256-word macro uses 8; `hl` selects `LDI`'s high or low byte; `sh` is `SRI`'s shift. The `stamp` bit in `WAIT` is held for the capture unit. `ADDR`, `TSETR`, `POLY` and `CRC` were added after v1 in free codes, so no opcode moved. The assembler picks `ADDR` and `TSETR` when the operand is a register: `add r0, r1`, `tset r1`. `ROUTE`, `LDP`, `JMPR` and `LANES`, and `CRC`'s `word` and `lane` fields, are an exploration on `explore/isa-lanes-int` (lab/explore/isa-lanes-int.md), not approved; every program that doesn't use them behaves as before. About 6.3% of the encoding space is still free.
 
 **Reserved encodings:** `ARM` and `MATCH` for hardware match rules, `CODE`, `CODE2` and `CRCSR` for the line coder (section 5.6).
 
