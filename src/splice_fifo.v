@@ -5,7 +5,7 @@
  */
 `default_nettype none
 
-module splice_fifo #(parameter DEPTH_LOG2 = 2) (
+module splice_fifo #(parameter DEPTH_LOG2 = 2, parameter LATCH = 0) (
     input  wire        clk,
     input  wire        rst_n,
     input  wire        clear,
@@ -25,13 +25,12 @@ module splice_fifo #(parameter DEPTH_LOG2 = 2) (
 `endif
 );
   localparam DEPTH = 1 << DEPTH_LOG2;
-  reg [15:0] mem [0:DEPTH-1];
   reg [DEPTH_LOG2:0] wp, rp;
+  wire wr = !clear && push && !full;
 
 `ifdef FORMAL
   assign wp_out = wp;
   assign rp_out = rp;
-  assign peek_word = mem[peek];
 `endif
 
   assign empty = wp == rp;
@@ -40,7 +39,8 @@ module splice_fifo #(parameter DEPTH_LOG2 = 2) (
   assign level = count16 > 16'd255 ? 8'd255 : count16[7:0];
   assign full  = wp[DEPTH_LOG2] != rp[DEPTH_LOG2] && wp[DEPTH_LOG2-1:0] == rp[DEPTH_LOG2-1:0];
   // An empty FIFO reads as 0, not as whatever an unwritten or old slot holds.
-  assign head  = empty ? 16'd0 : mem[rp[DEPTH_LOG2-1:0]];
+  wire [15:0] slot;
+  assign head  = empty ? 16'd0 : slot;
 
   // Asynchronous reset on the pointers only. Synthesis folds a synchronous clear into the increment,
   // giving !(wp | !wp), which is 0 on silicon but stays X forever in gate-level simulation. Clear is
@@ -58,6 +58,26 @@ module splice_fifo #(parameter DEPTH_LOG2 = 2) (
     end
   end
 
-  always @(posedge clk)
-    if (!clear && push && !full) mem[wp[DEPTH_LOG2-1:0]] <= din;
+  // Storage: flops, or with LATCH the latch file of splice_latch_rf.v, which reads the same way: a
+  // word pushed is at the head from the next cycle.
+  generate
+    if (LATCH) begin : lat
+      wire [DEPTH-1:0] we;
+      wire [16*DEPTH-1:0] q;
+      genvar k;
+      for (k = 0; k < DEPTH; k = k + 1) begin : w
+        assign we[k] = wr && wp[DEPTH_LOG2-1:0] == k;
+      end
+      splice_latch_rf #(.WORDS(DEPTH), .WIDTH(16)) rf (.clk(clk), .we(we), .wd(din), .q(q));
+      assign slot = q[16 * rp[DEPTH_LOG2-1:0] +: 16];
+    end else begin : ff
+      reg [15:0] mem [0:DEPTH-1];
+      always @(posedge clk)
+        if (wr) mem[wp[DEPTH_LOG2-1:0]] <= din;
+      assign slot = mem[rp[DEPTH_LOG2-1:0]];
+`ifdef FORMAL
+      assign peek_word = mem[peek];
+`endif
+    end
+  endgenerate
 endmodule

@@ -204,12 +204,12 @@ module tt_um_prajesh47_splice (
       .clk(clk), .rst_n(rst_n), .clear(engine_rst), .push(eng_push && push_to != 2'd1 && push_to != 2'd2),
       .din(e2h_data), .full(e2h_full), .pop(host_pop), .head(e2h_head), .empty(e2h_empty), .level(e2h_level));
 
-  // Links: one context's PUSH feeds another's PULL, with no host in between.
-  splice_fifo link0 (
+  // Links: one context's PUSH feeds another's PULL, with no host in between. Their words are latches.
+  splice_fifo #(.LATCH(1)) link0 (
       .clk(clk), .rst_n(rst_n), .clear(engine_rst), .push(eng_push && push_to == 2'd1), .din(e2h_data),
       .full(l0_full), .pop(eng_pop && pull_from == 2'd1), .head(l0_head), .empty(l0_empty), .level());
 
-  splice_fifo link1 (
+  splice_fifo #(.LATCH(1)) link1 (
       .clk(clk), .rst_n(rst_n), .clear(engine_rst), .push(eng_push && push_to == 2'd2), .din(e2h_data),
       .full(l1_full), .pop(eng_pop && pull_from == 2'd2), .head(l1_head), .empty(l1_empty), .level());
 

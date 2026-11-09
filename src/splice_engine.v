@@ -48,31 +48,32 @@ module splice_engine #(parameter NCTX = 4, parameter NFULL = 2) (
 
   // ------------------------------------------------------------------ State, per context
   reg [8:0]  pc      [0:NCTX-1];
-  reg [8:0]  lr      [0:NCTX-1];
-  reg [15:0] sr      [0:NCTX-1];
-  reg [4:0]  bc      [0:NCTX-1];
-  reg [15:0] to      [0:NFULL-1];
-  reg [15:0] to_left [0:NFULL-1];
   reg        to_act  [0:NFULL-1];
-  reg [15:0] stall   [0:NCTX-1];
   reg        z       [0:NCTX-1];
   reg        f       [0:NCTX-1];
   reg        m       [0:NCTX-1];   // a tick fired while the last was still pending, until JMP M reads it
   reg        msb     [0:NCTX-1];
   reg [3:0]  side_ln [0:NCTX-1];
-  reg [15:0] lfsr    [0:NFULL-1];
-  reg [15:0] tp      [0:NCTX-1];   // 16 bits from TSETR; TSET's constant fills the low 13
   reg [16:0] tcnt    [0:NCTX-1];   // one more, so TPHASE can start one and a half periods
   reg [15:0] since   [0:NFULL-1];   // cycles since the last tick, saturating
   reg [15:0] tint    [0:NFULL-1];   // cycles between the last two ticks, for TCAP
   reg        pending [0:NCTX-1];
   reg [3:0]  ts_line [0:NCTX-1];
   reg [1:0]  ts_want [0:NCTX-1];
-  reg [11:0] last    [0:NCTX-1];   // what this context saw at its previous slot, for edge waits
-  reg [15:0] poly    [0:NFULL-1];   // CRC polynomial, set by POLY
   reg        lastb   [0:NFULL-1];   // the bit last shifted by OUT, OUTB, IN or INB, which CRC steps on
 
   reg        prim;            // first cycle of a run: only fetches
+
+  // State written only in a context's own slot lives in latches (splice_latch_rf.v), one word per
+  // context, written at the end of the cycle as a flop would be:
+  //   lr, sr, bc, stall, tp (timer period: 16 bits from TSETR, TSET's constant fills the low 13),
+  //   last (what this context saw at its previous slot, for edge waits), and for full contexts only
+  //   to, to_left, lfsr and poly (the CRC polynomial, set by POLY).
+  wire [9*NCTX-1:0]   lr_q;
+  wire [16*NCTX-1:0]  sr_q, stall_q, tp_q;
+  wire [5*NCTX-1:0]   bc_q;
+  wire [12*NCTX-1:0]  last_q;
+  wire [16*NFULL-1:0] to_q, to_left_q, lfsr_q, poly_q;
   localparam CW = NCTX > 2 ? 2 : 1;
   reg [CW-1:0] cur;
   /* verilator lint_off WIDTHTRUNC */
@@ -107,7 +108,7 @@ module splice_engine #(parameter NCTX = 4, parameter NFULL = 2) (
       wire edge_seen = lines[ts_line[g]] != plines[ts_line[g]];
       assign tick_now[g] = (ts_want[g] != 2'd3)
           ? edge_seen && (ts_want[g] == 2'd2 || lines[ts_line[g]] == ts_want[g][0])
-          : (tp[g] != 0 && tcnt[g] <= 17'd1);
+          : (tp_q[16 * g +: 16] != 0 && tcnt[g] <= 17'd1);
     end
   endgenerate
 
@@ -194,9 +195,12 @@ module splice_engine #(parameter NCTX = 4, parameter NFULL = 2) (
   wire [15:0] r1_c = rr_cx[31:16];
   wire [15:0] r2_c = rr_cx[47:32];
   wire [15:0] r3_c = rr_cx[63:48];
-  wire [15:0] sr_c = sr[c];
-  wire [4:0]  bc_c = bc[c];
-  wire [15:0] to_c = full_c ? to[cf] : 16'd0;
+  wire [15:0] sr_c = sr_q[16 * c +: 16];
+  wire [4:0]  bc_c = bc_q[5 * c +: 5];
+  wire [15:0] to_c = full_c ? to_q[16 * cf +: 16] : 16'd0;
+  wire [15:0] stall_c = stall_q[16 * c +: 16];
+  wire [11:0] last_c = last_q[12 * c +: 12];
+  wire [15:0] tp_c = tp_q[16 * c +: 16];
 
   function automatic [15:0] operand(input [2:0] code, input [15:0] r0, input [15:0] r1, input [15:0] r2,
                                     input [15:0] r3, input [15:0] srv, input [4:0] bcv, input [15:0] tov);
@@ -216,21 +220,21 @@ module splice_engine #(parameter NCTX = 4, parameter NFULL = 2) (
   wire [15:0] opnd_mov = operand(ins[4:2], r0_c, r1_c, r2_c, r3_c, sr_c, bc_c, to_c);  // MOV, CMP b
   wire [15:0] opnd_cmp = operand(ins[7:5], r0_c, r1_c, r2_c, r3_c, sr_c, bc_c, to_c);  // CMP a, TSETR, POLY
 
-  wire        sbit = msb[c] ? sr[c][15] : sr[c][0];
-  wire [15:0] sr_shifted_out = msb[c] ? {sr[c][14:0], 1'b0} : {1'b0, sr[c][15:1]};
+  wire        sbit = msb[c] ? sr_c[15] : sr_c[0];
+  wire [15:0] sr_shifted_out = msb[c] ? {sr_c[14:0], 1'b0} : {1'b0, sr_c[15:1]};
   wire        in_bit = lines[ln_a];
-  wire [15:0] sr_shifted_in = msb[c] ? {sr[c][14:0], in_bit} : {in_bit, sr[c][15:1]};
-  wire [4:0]  bc_dec = (bc[c] == 0) ? 5'd0 : bc[c] - 5'd1;
+  wire [15:0] sr_shifted_in = msb[c] ? {sr_c[14:0], in_bit} : {in_bit, sr_c[15:1]};
+  wire [4:0]  bc_dec = (bc_c == 0) ? 5'd0 : bc_c - 5'd1;
 
   // ------------------------------------------------------------------ Execute conditions
   wire slot = running && !prim;
-  wire gated = slot && !halted[c] && stall[c] == 0;
+  wire gated = slot && !halted[c] && stall_c == 0;
   wire pend_eff = pending[c] || tick_now[c];
   wire active = gated && (!tick_q || pend_eff);   // reached: a side-set applies
 
   // WAIT
   wire wait_bit = lines[ln_w];
-  wire wait_was = ln_w < 4'd12 ? last[c][ln_w[3:0]] : 1'b1;
+  wire wait_was = ln_w < 4'd12 ? last_c[ln_w[3:0]] : 1'b1;
   reg  wait_met;
   always @* begin
     case (ins[5:4])
@@ -240,7 +244,7 @@ module splice_engine #(parameter NCTX = 4, parameter NFULL = 2) (
       default: wait_met = wait_was && !wait_bit;
     endcase
   end
-  wire [15:0] to_cur = (full_c && to_act[cf]) ? to_left[cf] : to_c;
+  wire [15:0] to_cur = (full_c && to_act[cf]) ? to_left_q[16 * cf +: 16] : to_c;
   wire [15:0] to_dec = to_cur - 16'd1;
   wire        to_on = to_c != 0;
   wire        to_expired = to_on && to_dec == 0;
@@ -260,8 +264,8 @@ module splice_engine #(parameter NCTX = 4, parameter NFULL = 2) (
       3'd2: take_jmp = !z[c];
       3'd3: take_jmp = f[c];
       3'd4: take_jmp = !f[c];
-      3'd5: take_jmp = bc[c] == 0;
-      3'd6: take_jmp = bc[c] != 0;
+      3'd5: take_jmp = bc_c == 0;
+      3'd6: take_jmp = bc_c != 0;
       default: take_jmp = m[c];
     endcase
   end
@@ -272,7 +276,7 @@ module splice_engine #(parameter NCTX = 4, parameter NFULL = 2) (
   // djnz_dec != 0 and bc_dec != 0.
   wire [3:0] loops = {r3_c != 16'd1, r2_c != 16'd1, r1_c != 16'd1, r0_c != 16'd1};
   wire       djnz_loops = loops[rn_djnz];
-  wire       bc_loops = bc[c] > 5'd1;
+  wire       bc_loops = bc_c > 5'd1;
 
   // pc - rel with the high part selected by the borrow, so the instruction doesn't ripple through 9 bits
   wire [4:0] back_lo = {1'b0, pc[c][3:0]} - {1'b0, ins[3:0]};
@@ -284,7 +288,7 @@ module splice_engine #(parameter NCTX = 4, parameter NFULL = 2) (
   wire to_back = is_bit && bc_loops;
   wire [8:0] pc_taken = to_target ? ins[8:0]
                       : is_call   ? ins[11:3]
-                      : is_ret    ? lr[c]
+                      : is_ret    ? lr_q[9 * c +: 9]
                       : to_back   ? pc_back
                       :             pc_inc;
   wire [8:0] pc_next = ex ? pc_taken : pc[c];
@@ -307,7 +311,7 @@ module splice_engine #(parameter NCTX = 4, parameter NFULL = 2) (
   // ------------------------------------------------------------------ FIFOs
   assign h2e_pop = ex && (is_pullw || (is_pull && !h2e_empty));
   assign e2h_push = ex && is_push;
-  assign e2h_data = sr[c];
+  assign e2h_data = sr_c;
   assign cap_on = ex && is_capon;
   assign cap_off = ex && is_capoff;
   assign cap_mark = ex && is_capmark;
@@ -324,11 +328,11 @@ module splice_engine #(parameter NCTX = 4, parameter NFULL = 2) (
   // CRC step on the last shifted bit: left with a left-aligned polynomial, or right with a reflected one
   wire [15:0] crc_reg  = rr_cx[16 * rn_alu +: 16];
   wire        crc_fb   = (ins[5] ? crc_reg[15] : crc_reg[0]) ^ (full_c && lastb[cf]);
-  wire [15:0] alu_crc  = (ins[5] ? {crc_reg[14:0], 1'b0} : {1'b0, crc_reg[15:1]}) ^ ({16{crc_fb && full_c}} & poly[cf]);
-  wire [15:0] lfsr_c = full_c ? lfsr[cf] : 16'd0;
+  wire [15:0] alu_crc  = (ins[5] ? {crc_reg[14:0], 1'b0} : {1'b0, crc_reg[15:1]}) ^ ({16{crc_fb && full_c}} & poly_q[16 * cf +: 16]);
+  wire [15:0] lfsr_c = full_c ? lfsr_q[16 * cf +: 16] : 16'd0;
   wire [15:0] lfsr_nx = {1'b0, lfsr_c[15:1]} ^ (lfsr_c[0] ? 16'hB400 : 16'h0000);
   wire [15:0] mov_val = opnd_mov;
-  wire [16:0] phase_half = {2'd0, tp[c][15:1]};
+  wire [16:0] phase_half = {2'd0, tp_c[15:1]};
 
   // Write ports. Each state element takes one data word selected by AND-OR, rather than one path per
   // instruction, which would give every bit of the register file its own mux tree.
@@ -388,9 +392,41 @@ module splice_engine #(parameter NCTX = 4, parameter NFULL = 2) (
       assign rr_wen[gw] = rst || (rr_we && {c, rr_idx} == gw);
     end
   endgenerate
-  splice_latch_rf #(.WORDS(4 * NCTX)) rf (.clk(clk), .we(rr_wen), .wd(rst ? 16'd0 : rr_wd), .q(rr_q));
-
   wire [15:0] stall_wd = is_dly ? {4'd0, ins[11:0]} : is_dlyr ? alu_reg : {12'd0, dly_field};
+
+  // One word per context. A reset writes every word its reset value; otherwise the current context's.
+  localparam [NCTX-1:0] ONE = 1;
+  localparam [NFULL-1:0] ONE_F = 1;
+  wire [NCTX-1:0]  all_w = {NCTX{rst}};
+  wire [NCTX-1:0]  cur_w = ONE << c;
+  wire [NFULL-1:0] full_w = full_c ? ONE_F << cf : {NFULL{1'b0}};
+  wire stall_we = slot && !halted[c] && (stall_c != 0 || ex);
+  wire to_left_we = gated && is_wait && !wait_met && to_on && !to_expired;
+  splice_latch_rf #(.WORDS(NCTX), .WIDTH(9)) lr_rf (.clk(clk), .we(all_w | {NCTX{ex && is_call}} & cur_w),
+      .wd(rst ? 9'd0 : pc_inc), .q(lr_q));
+  splice_latch_rf #(.WORDS(NCTX), .WIDTH(16)) sr_rf (.clk(clk), .we(all_w | {NCTX{ex && sr_we}} & cur_w),
+      .wd(rst ? 16'd0 : sr_wd), .q(sr_q));
+  splice_latch_rf #(.WORDS(NCTX), .WIDTH(5)) bc_rf (.clk(clk), .we(all_w | {NCTX{ex && bc_we}} & cur_w),
+      .wd(rst ? 5'd0 : bc_wd), .q(bc_q));
+  splice_latch_rf #(.WORDS(NCTX), .WIDTH(16)) stall_rf (.clk(clk), .we(all_w | {NCTX{stall_we}} & cur_w),
+      .wd(rst ? 16'd0 : stall_c != 0 ? stall_c - 16'd1 : stall_wd), .q(stall_q));
+  splice_latch_rf #(.WORDS(NCTX), .WIDTH(16)) tp_rf (.clk(clk),
+      .we(all_w | {NCTX{ex && (is_tset || is_tsetr)}} & cur_w),
+      .wd(rst ? 16'd0 : is_tset ? {3'd0, ins[12:0]} : opnd_cmp), .q(tp_q));
+  splice_latch_rf #(.WORDS(NCTX), .WIDTH(12)) last_rf (.clk(clk),
+      .we(all_w | {NCTX{prim && running}} | {NCTX{slot}} & cur_w),
+      .wd(rst ? 12'hFFF : lines_in), .q(last_q));
+  splice_latch_rf #(.WORDS(NFULL), .WIDTH(16)) to_rf (.clk(clk),
+      .we({NFULL{rst}} | {NFULL{ex && is_mov && ins[7:5] == 3'd6}} & full_w), .wd(rst ? 16'd0 : mov_val), .q(to_q));
+  splice_latch_rf #(.WORDS(NFULL), .WIDTH(16)) to_left_rf (.clk(clk),
+      .we({NFULL{rst}} | {NFULL{to_left_we}} & full_w), .wd(rst ? 16'd0 : to_dec), .q(to_left_q));
+  splice_latch_rf #(.WORDS(NFULL), .WIDTH(16)) lfsr_rf (.clk(clk),
+      .we({NFULL{rst}} | {NFULL{ex && (is_rand || (is_mov && ins[7:5] == 3'd7))}} & full_w),
+      .wd(rst ? 16'hACE1 : is_rand ? lfsr_nx : mov_val), .q(lfsr_q));
+  splice_latch_rf #(.WORDS(NFULL), .WIDTH(16)) poly_rf (.clk(clk),
+      .we({NFULL{rst}} | {NFULL{ex && is_poly}} & full_w), .wd(rst ? 16'd0 : opnd_cmp), .q(poly_q));
+
+  splice_latch_rf #(.WORDS(4 * NCTX)) rf (.clk(clk), .we(rr_wen), .wd(rst ? 16'd0 : rr_wd), .q(rr_q));
 
   integer i;
   always @(posedge clk) begin
@@ -405,30 +441,20 @@ module splice_engine #(parameter NCTX = 4, parameter NFULL = 2) (
       src <= 24'd0;
       for (i = 0; i < NCTX; i = i + 1) begin
         pc[i] <= 9'd0;
-        lr[i] <= 0;
-        sr[i] <= 0;
-        bc[i] <= 0;
-        stall[i] <= 0;
         z[i] <= 0;
         f[i] <= 0;
         m[i] <= 0;
         msb[i] <= 0;
         side_ln[i] <= 4'd15;
-        tp[i] <= 0;
         tcnt[i] <= 0;
         pending[i] <= 0;
         ts_line[i] <= 0;
         ts_want[i] <= 2'd3;
-        last[i] <= 12'hFFF;
       end
       for (i = 0; i < NFULL; i = i + 1) begin
-        to[i] <= 0;
-        to_left[i] <= 0;
         to_act[i] <= 0;
-        lfsr[i] <= 16'hACE1;
         since[i] <= 16'hFFFF;
         tint[i] <= 16'hFFFF;
-        poly[i] <= 0;
         lastb[i] <= 0;
       end
       for (i = 1; i < NCTX; i = i + 1) pc[i] <= ctx_pc[9 * i - 9 +: 9];
@@ -439,8 +465,8 @@ module splice_engine #(parameter NCTX = 4, parameter NFULL = 2) (
 
       // Timers run on every clock, for both contexts.
       for (i = 0; i < NCTX; i = i + 1) begin
-        if (ts_want[i] == 2'd3 && tp[i] != 0)
-          tcnt[i] <= tcnt[i] <= 17'd1 ? {1'b0, tp[i]} : tcnt[i] - 17'd1;
+        if (ts_want[i] == 2'd3 && tp_q[16 * i +: 16] != 0)
+          tcnt[i] <= tcnt[i] <= 17'd1 ? {1'b0, tp_q[16 * i +: 16]} : tcnt[i] - 17'd1;
         if (tick_now[i]) pending[i] <= 1'b1;
       end
       // TCAP: the interval that ends at each tick is latched, so firmware can read it late
@@ -455,14 +481,11 @@ module splice_engine #(parameter NCTX = 4, parameter NFULL = 2) (
 
       if (prim) begin
         prim <= 1'b0;
-        for (i = 0; i < NCTX; i = i + 1) last[i] <= lines_in;
       end else if (running) begin
-        last[c] <= lines_in;
         cur <= cur_nx;
 
         if (!halted[c]) begin
-          if (stall[c] != 0) begin
-            stall[c] <= stall[c] - 16'd1;
+          if (stall_c != 0) begin
           end else begin
             if (active && tick_q) pending[c] <= 1'b0;
 
@@ -475,7 +498,6 @@ module splice_engine #(parameter NCTX = 4, parameter NFULL = 2) (
                   f[c] <= 1'b1;
                   to_act[cf] <= 1'b0;
                 end else begin
-                  to_left[cf] <= to_dec;
                   to_act[cf] <= 1'b1;
                 end
               end
@@ -483,27 +505,22 @@ module splice_engine #(parameter NCTX = 4, parameter NFULL = 2) (
 
             if (ex) begin
               pc[c] <= pc_next;
-              stall[c] <= stall_wd;
               if (z_we) z[c] <= z_wd;
               if (f_we) f[c] <= f_wd;
-              if (sr_we) sr[c] <= sr_wd;
-              if (bc_we) bc[c] <= bc_wd;
               if (is_waitt) pending[c] <= 1'b0;
               if (is_tset) begin
-                tp[c] <= {3'd0, ins[12:0]};
                 tcnt[c] <= {4'd0, ins[12:0]};
                 pending[c] <= 1'b0;
               end
               if (is_tsetr) begin
-                tp[c] <= opnd_cmp;
                 tcnt[c] <= {1'b0, opnd_cmp};
                 pending[c] <= 1'b0;
               end
               if (is_tphase) begin
                 case (ins[7:6])
-                  2'd0: tcnt[c] <= {1'b0, tp[c]} - 17'd1;
+                  2'd0: tcnt[c] <= {1'b0, tp_c} - 17'd1;
                   2'd1: tcnt[c] <= phase_half - 17'd1;
-                  2'd2: tcnt[c] <= {1'b0, tp[c]} + phase_half - 17'd1;
+                  2'd2: tcnt[c] <= {1'b0, tp_c} + phase_half - 17'd1;
                   default: tcnt[c] <= {1'b0, r1_c};
                 endcase
                 pending[c] <= 1'b0;
@@ -513,14 +530,10 @@ module splice_engine #(parameter NCTX = 4, parameter NFULL = 2) (
                 ts_want[c] <= ins[3:2];
                 pending[c] <= 1'b0;
               end
-              if (is_poly && full_c) poly[cf] <= opnd_cmp;
               if ((is_out || is_outb) && full_c) lastb[cf] <= sbit;
               if ((is_in || is_inb) && full_c) lastb[cf] <= in_bit;
               if (is_msb) msb[c] <= ins[7];
               if (is_side) side_ln[c] <= ln_p;
-              if (is_mov && ins[7:5] == 3'd6 && full_c) to[cf] <= mov_val;
-              if ((is_rand || (is_mov && ins[7:5] == 3'd7)) && full_c) lfsr[cf] <= is_rand ? lfsr_nx : mov_val;
-              if (is_call) lr[c] <= pc_inc;
               if (is_irq) irq <= 1'b1;
               if (is_trig) trig <= 1'b1;
               if (is_halt) halted[c] <= 1'b1;
