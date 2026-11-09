@@ -104,3 +104,35 @@ async def test_tcap_spdif_lockstep_with_model(dut):
         model.step(UI_IDLE, 0xFE | level)
         while model.e2h:
             model.e2h.pop(0)
+
+
+@cocotb.test()
+async def test_contexts_keep_their_own_interval(dut):
+    """Each context times its own ticks. Plain TCAP reads the latch, not the same-cycle bypass, which is where a
+    shared latch survived as a mutant."""
+    from cocotb.triggers import ClockCycles
+    from test import assemble, fifo_read, write_reg
+    await reset(dut)
+
+    def half(period, tag):
+        return (f"tset {period}\n nop.t\n nop.t\n dly 2\n tcap r0\n mov sr, r0\n push\n halt\n")
+    prog = assemble(half(9, "a") + ".ctx1 second\nsecond: " + half(23, "b"))
+    model = Splice()
+    model.load(prog.words)
+    model.two, model.ctx1_pc = True, prog.ctx1
+    model.start()
+    for _ in range(300):
+        model.step(UI_IDLE, 0xFF)
+    want = sorted(model.e2h)
+    assert len(want) == 2 and want[0] != want[1], f"model gave {want}"
+
+    await stop(dut)
+    await load_program(dut, prog.words)
+    await write_reg(dut, 0, 1)  # two contexts
+    await write_reg(dut, 5, prog.ctx1)
+    await start(dut)
+    await ClockCycles(dut.clk, 300)
+    got = sorted(await fifo_read(dut, 2))
+    await stop(dut)
+    await write_reg(dut, 0, 0)
+    assert got == want, f"RTL {got}, model {want}"
