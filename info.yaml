@@ -24,7 +24,6 @@ project:
     - "splice_host.v"
     - "splice_bridge.v"
     - "splice_capture.v"
-    - "RM_IHPSG13_1P_256x16_c2_bm_bist.v"
     - "RM_IHPSG13_1P_512x16_c2_bm_bist.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
