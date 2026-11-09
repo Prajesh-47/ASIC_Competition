@@ -37,6 +37,23 @@ class Context:
 
 class Splice:
     FIFO_DEPTH = 4
+    NCTX = 4  # contexts in hardware. The first `nctx` of them take turns, one slot each
+
+    @property
+    def two(self):
+        return self.nctx > 1
+
+    @two.setter
+    def two(self, value):  # older callers: True means two contexts
+        self.nctx = 2 if value else 1
+
+    @property
+    def ctx1_pc(self):
+        return self.ctx_pc[0]
+
+    @ctx1_pc.setter
+    def ctx1_pc(self, value):
+        self.ctx_pc[0] = value
 
     def __init__(self):
         self.prog = [0] * 512
@@ -47,8 +64,10 @@ class Splice:
         self.coverage[name] = self.coverage.get(name, 0) + 1
 
     def reset(self):
-        self.two = False
-        self.ctx1_pc = 0
+        self.nctx = 1
+        self.ctx_pc = [0, 0, 0]       # contexts 1-3
+        self.pull_sel = [0] * 4       # per context: 0 host, 1 link 0, 2 link 1, 3 host
+        self.push_sel = [0] * 4
         self.odrain = 0
         self.fast = 0
         self.holdoff = 64
@@ -63,6 +82,7 @@ class Splice:
         self.s2 = [1] * 12
         self.prev = [1] * 12
         self.h2e, self.e2h = [], []
+        self.links = [[], []]
         self.stop()
 
     def stop(self):
@@ -75,7 +95,8 @@ class Splice:
         self.running = False
         self.prim = False
         self.cur = 0
-        self.ctx = [Context(), Context()]
+        self.ctx = [Context() for _ in range(self.NCTX)]
+        self.links = [[], []]
         self.eng = [1] * 8 + [0] * 4
         self.src = [0] * 8
         self.bridge = [["IDLE", 0] for _ in range(4)]
@@ -142,7 +163,7 @@ class Splice:
         self.e2h = []
         self._clear_run()
         self.cap_clear()
-        self.ctx = [Context(0), Context(self.ctx1_pc)]
+        self.ctx = [Context(pc) for pc in [0] + self.ctx_pc]
         self.running, self.prim = True, True
 
     # Host side of the FIFOs
@@ -169,8 +190,7 @@ class Splice:
             else:
                 c = self.ctx[self.cur]
                 self.exec_slot(c)
-                if self.two:
-                    self.cur ^= 1
+                self.cur = (self.cur + 1) % self.nctx
         for c in self.ctx:  # a missed tick shows next cycle and beats an instruction writing F
             if c.missed:
                 c.F = 1
@@ -254,6 +274,15 @@ class Splice:
             return c.R[code]
         return {4: c.SR, 5: c.BC, 6: c.TO, 7: c.SR >> 8}[code]
 
+    def fifo_in(self, c):
+        """The FIFO this context's PULL reads: the host's, or a link fed by another context."""
+        sel = self.pull_sel[self.ctx.index(c)]
+        return self.links[sel - 1] if sel in (1, 2) else self.h2e
+
+    def fifo_out(self, c):
+        sel = self.push_sel[self.ctx.index(c)]
+        return self.links[sel - 1] if sel in (1, 2) else self.e2h
+
     def exec_slot(self, c):
         prev, c.last = c.last, list(self.s2)
         if c.halted:
@@ -331,17 +360,20 @@ class Splice:
         elif op == "DLYR":
             dly = c.R[f["r"]]
         elif op == "PULL":
-            if self.h2e:
-                c.SR, c.F = self.h2e.pop(0), 0
+            src = self.fifo_in(c)
+            if src:
+                c.SR, c.F = src.pop(0), 0
             else:
                 c.F = 1
         elif op == "PULLW":
-            if not self.h2e:
+            src = self.fifo_in(c)
+            if not src:
                 return
-            c.SR, c.BC = self.h2e.pop(0), f["n"]
+            c.SR, c.BC = src.pop(0), f["n"]
         elif op == "PUSH":
-            if len(self.e2h) < self.FIFO_DEPTH:
-                self.e2h.append(c.SR)
+            dst = self.fifo_out(c)
+            if len(dst) < self.FIFO_DEPTH:
+                dst.append(c.SR)
             else:
                 c.F = 1
         elif op == "BCI":
@@ -437,7 +469,7 @@ class Splice:
         if op == "MODE":
             self.cover(f"MODE.{f['src']}")
         elif op == "PUSH":
-            self.cover(f"PUSH.{'full' if c.F and len(self.e2h) >= self.FIFO_DEPTH else 'ok'}")
+            self.cover(f"PUSH.{'full' if c.F and len(self.fifo_out(c)) >= self.FIFO_DEPTH else 'ok'}")
         elif op == "TPHASE":
             self.cover(f"TPHASE.{f['mode']}")
         elif op == "TSRC":

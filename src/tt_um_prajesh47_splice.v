@@ -41,7 +41,7 @@ module tt_um_prajesh47_splice (
   wire        start, stop, mem_req, mem_we, mem_cap, reg_we;
   wire [8:0]  mem_addr;
   wire [15:0] mem_wdata, mem_rdata;
-  wire [3:0]  reg_addr;
+  wire [4:0]  reg_addr;
   wire [7:0]  reg_wdata;
   reg  [7:0]  reg_rdata;
   wire        host_push, host_pop, h2e_full, e2h_empty;
@@ -51,8 +51,11 @@ module tt_um_prajesh47_splice (
   wire        running, irq, trig;
   wire        engine_cap_on, engine_cap_off, engine_cap_mark;
   wire [1:0]  halted;
-  wire        h2e_empty, h2e_pop, e2h_full, e2h_push;
+  wire        h2e_empty, e2h_full;
   wire [15:0] h2e_head, e2h_data;
+  wire [3:0]  halted_all;
+  wire [1:0]  cur_ctx;
+  assign halted = halted_all[1:0];
 
   wire [7:0] status = {2'd0, irq, e2h_empty, h2e_full, halted, running};
 
@@ -87,8 +90,13 @@ module tt_um_prajesh47_splice (
   // Host registers: 0 mode, 1 open-drain lines, 2 fast pass-through lines, 3 bridge holdoff,
   // 4 and 5 context 1's start address, 6 and 7 capture's 4 watched lines, 8 and 9 capture prescaler,
   // 10 capture mode and control, 11 and 12 entries kept after a trigger, 13 and 14 capture write
-  // pointer (read only).
-  reg       two_ctx;
+  // pointer (read only). 16 and 17 context 2's start address, 18 and 19 context 3's, 20 where each
+  // context's PULL reads from and 21 where its PUSH goes (2 bits per context, context 0 lowest:
+  // 0 host, 1 link 0, 2 link 1), 22 every context's halted bit and the links' state (read only).
+  // Register 0 holds the number of contexts less one, so writing 1 still means two.
+  reg [1:0] nctx_m1;
+  reg [8:0] ctx2_pc, ctx3_pc;
+  reg [7:0] pull_sel, push_sel;
   reg [7:0] odrain, fast, holdoff;
   reg [8:0] ctx1_pc;
   reg [15:0] cap_watch, cap_prescale;
@@ -96,11 +104,15 @@ module tt_um_prajesh47_splice (
   reg [8:0]  cap_post;
   wire       cap_active, cap_wrapped, cap_triggered;
   wire [8:0] cap_ptr;
-  wire       host_cap_on = reg_we && reg_addr == 4'd10 && reg_wdata[7];
-  wire       host_cap_off = reg_we && reg_addr == 4'd10 && reg_wdata[6];
+  wire       host_cap_on = reg_we && reg_addr == 5'd10 && reg_wdata[7];
+  wire       host_cap_off = reg_we && reg_addr == 5'd10 && reg_wdata[6];
   always @(posedge clk) begin
     if (!rst_n) begin
-      two_ctx <= 1'b0;
+      nctx_m1 <= 2'd0;
+      ctx2_pc <= 9'd0;
+      ctx3_pc <= 9'd0;
+      pull_sel <= 8'd0;
+      push_sel <= 8'd0;
       odrain <= 8'd0;
       fast <= 8'd0;
       holdoff <= 8'd64;
@@ -111,40 +123,53 @@ module tt_um_prajesh47_splice (
       cap_post <= 9'd0;
     end else if (reg_we) begin
       case (reg_addr)
-        4'd0: two_ctx <= reg_wdata[0];
-        4'd1: odrain <= reg_wdata;
-        4'd2: fast <= reg_wdata;
-        4'd3: holdoff <= reg_wdata;
-        4'd4: ctx1_pc[8] <= reg_wdata[0];
-        4'd5: ctx1_pc[7:0] <= reg_wdata;
-        4'd6: cap_watch[7:0] <= reg_wdata;
-        4'd7: cap_watch[15:8] <= reg_wdata;
-        4'd8: cap_prescale[7:0] <= reg_wdata;
-        4'd9: cap_prescale[15:8] <= reg_wdata;
-        4'd10: cap_mode <= reg_wdata[2:0];
-        4'd11: cap_post[7:0] <= reg_wdata;
-        4'd12: cap_post[8] <= reg_wdata[0];
+        5'd0: nctx_m1 <= reg_wdata[1:0];
+        5'd1: odrain <= reg_wdata;
+        5'd2: fast <= reg_wdata;
+        5'd3: holdoff <= reg_wdata;
+        5'd4: ctx1_pc[8] <= reg_wdata[0];
+        5'd5: ctx1_pc[7:0] <= reg_wdata;
+        5'd6: cap_watch[7:0] <= reg_wdata;
+        5'd7: cap_watch[15:8] <= reg_wdata;
+        5'd8: cap_prescale[7:0] <= reg_wdata;
+        5'd9: cap_prescale[15:8] <= reg_wdata;
+        5'd10: cap_mode <= reg_wdata[2:0];
+        5'd11: cap_post[7:0] <= reg_wdata;
+        5'd12: cap_post[8] <= reg_wdata[0];
+        5'd16: ctx2_pc[8] <= reg_wdata[0];
+        5'd17: ctx2_pc[7:0] <= reg_wdata;
+        5'd18: ctx3_pc[8] <= reg_wdata[0];
+        5'd19: ctx3_pc[7:0] <= reg_wdata;
+        5'd20: pull_sel <= reg_wdata;
+        5'd21: push_sel <= reg_wdata;
         default: ;
       endcase
     end
   end
   always @* begin
     case (reg_addr)
-      4'd0: reg_rdata = {7'd0, two_ctx};
-      4'd1: reg_rdata = odrain;
-      4'd2: reg_rdata = fast;
-      4'd3: reg_rdata = holdoff;
-      4'd4: reg_rdata = {7'd0, ctx1_pc[8]};
-      4'd5: reg_rdata = ctx1_pc[7:0];
-      4'd6: reg_rdata = cap_watch[7:0];
-      4'd7: reg_rdata = cap_watch[15:8];
-      4'd8: reg_rdata = cap_prescale[7:0];
-      4'd9: reg_rdata = cap_prescale[15:8];
-      4'd10: reg_rdata = {cap_active, cap_wrapped, cap_triggered, 2'd0, cap_mode};
-      4'd11: reg_rdata = cap_post[7:0];
-      4'd12: reg_rdata = {7'd0, cap_post[8]};
-      4'd13: reg_rdata = cap_ptr[7:0];
-      4'd14: reg_rdata = {7'd0, cap_ptr[8]};
+      5'd0: reg_rdata = {6'd0, nctx_m1};
+      5'd1: reg_rdata = odrain;
+      5'd2: reg_rdata = fast;
+      5'd3: reg_rdata = holdoff;
+      5'd4: reg_rdata = {7'd0, ctx1_pc[8]};
+      5'd5: reg_rdata = ctx1_pc[7:0];
+      5'd6: reg_rdata = cap_watch[7:0];
+      5'd7: reg_rdata = cap_watch[15:8];
+      5'd8: reg_rdata = cap_prescale[7:0];
+      5'd9: reg_rdata = cap_prescale[15:8];
+      5'd10: reg_rdata = {cap_active, cap_wrapped, cap_triggered, 2'd0, cap_mode};
+      5'd11: reg_rdata = cap_post[7:0];
+      5'd12: reg_rdata = {7'd0, cap_post[8]};
+      5'd13: reg_rdata = cap_ptr[7:0];
+      5'd14: reg_rdata = {7'd0, cap_ptr[8]};
+      5'd16: reg_rdata = {7'd0, ctx2_pc[8]};
+      5'd17: reg_rdata = ctx2_pc[7:0];
+      5'd18: reg_rdata = {7'd0, ctx3_pc[8]};
+      5'd19: reg_rdata = ctx3_pc[7:0];
+      5'd20: reg_rdata = pull_sel;
+      5'd21: reg_rdata = push_sel;
+      5'd22: reg_rdata = {l1_full, l1_empty, l0_full, l0_empty, halted_all};
       default: reg_rdata = 8'd0;
     endcase
   end
@@ -152,13 +177,34 @@ module tt_um_prajesh47_splice (
   // ------------------------------------------------------------------ FIFOs, cleared with a run
   wire engine_rst = !rst_n || start || stop;
 
+  // The engine sees one FIFO pair, routed per context to the host or to a link between contexts.
+  wire        eng_empty, eng_full, eng_pop, eng_push;
+  wire [15:0] eng_head;
+  wire [1:0]  pull_from = pull_sel[2 * cur_ctx +: 2];
+  wire [1:0]  push_to = push_sel[2 * cur_ctx +: 2];
+  wire        l0_full, l0_empty, l1_full, l1_empty;
+  wire [15:0] l0_head, l1_head;
+
   splice_fifo h2e (
       .clk(clk), .rst_n(rst_n), .clear(!rst_n || stop), .push(host_push), .din(host_wdata), .full(h2e_full),
-      .pop(h2e_pop), .head(h2e_head), .empty(h2e_empty));
+      .pop(eng_pop && pull_from != 2'd1 && pull_from != 2'd2), .head(h2e_head), .empty(h2e_empty));
 
   splice_fifo e2h (
-      .clk(clk), .rst_n(rst_n), .clear(engine_rst), .push(e2h_push), .din(e2h_data), .full(e2h_full),
-      .pop(host_pop), .head(e2h_head), .empty(e2h_empty));
+      .clk(clk), .rst_n(rst_n), .clear(engine_rst), .push(eng_push && push_to != 2'd1 && push_to != 2'd2),
+      .din(e2h_data), .full(e2h_full), .pop(host_pop), .head(e2h_head), .empty(e2h_empty));
+
+  // Links: one context's PUSH feeds another's PULL, with no host in between.
+  splice_fifo link0 (
+      .clk(clk), .rst_n(rst_n), .clear(engine_rst), .push(eng_push && push_to == 2'd1), .din(e2h_data),
+      .full(l0_full), .pop(eng_pop && pull_from == 2'd1), .head(l0_head), .empty(l0_empty));
+
+  splice_fifo link1 (
+      .clk(clk), .rst_n(rst_n), .clear(engine_rst), .push(eng_push && push_to == 2'd2), .din(e2h_data),
+      .full(l1_full), .pop(eng_pop && pull_from == 2'd2), .head(l1_head), .empty(l1_empty));
+
+  assign eng_head  = pull_from == 2'd1 ? l0_head : pull_from == 2'd2 ? l1_head : h2e_head;
+  assign eng_empty = pull_from == 2'd1 ? l0_empty : pull_from == 2'd2 ? l1_empty : h2e_empty;
+  assign eng_full  = push_to == 2'd1 ? l0_full : push_to == 2'd2 ? l1_full : e2h_full;
 
   // ------------------------------------------------------------------ Engine
   wire [8:0]  fetch_addr;
@@ -170,22 +216,23 @@ module tt_um_prajesh47_splice (
       .clk       (clk),
       .rst       (engine_rst),
       .start     (start && rst_n),
-      .two_ctx   (two_ctx),
-      .ctx1_pc   (ctx1_pc),
+      .nctx_m1   (nctx_m1),
+      .ctx_pc    ({ctx3_pc, ctx2_pc, ctx1_pc}),
+      .cur_ctx   (cur_ctx),
       .mem_data  (prog_dout),
       .fetch_addr(fetch_addr),
       .lines_in  (sync2),
       .lines_prev(sync_prev),
       .eng_nx    (eng_nx),
       .src_nx    (src_nx),
-      .h2e_head  (h2e_head),
-      .h2e_empty (h2e_empty),
-      .h2e_pop   (h2e_pop),
+      .h2e_head  (eng_head),
+      .h2e_empty (eng_empty),
+      .h2e_pop   (eng_pop),
       .e2h_data  (e2h_data),
-      .e2h_full  (e2h_full),
-      .e2h_push  (e2h_push),
+      .e2h_full  (eng_full),
+      .e2h_push  (eng_push),
       .running   (running),
-      .halted    (halted),
+      .halted    (halted_all),
       .irq       (irq),
       .trig      (trig),
       .cap_on    (engine_cap_on),

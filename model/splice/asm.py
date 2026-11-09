@@ -11,7 +11,7 @@
     ldi    r0, 0x1234             ; pseudo: two words if the value needs them
     delay  1000                   ; pseudo: spend exactly this many cycles
     .equ   BIT, 434
-    .ctx1  label                  ; where context 1 starts
+    .ctx1  label                  ; where context 1 starts; .ctx2 and .ctx3 likewise
 
 Operands may use + - * / // << >> and parentheses over numbers and .equ names.
 """
@@ -56,8 +56,9 @@ def evaluate(text, names):
 
 
 class Program:
-    def __init__(self, words, labels, ctx1, listing):
+    def __init__(self, words, labels, ctx1, listing, ctx=None):
         self.words, self.labels, self.ctx1, self.listing = words, labels, ctx1, listing
+        self.ctx = ctx or [ctx1, 0, 0]  # start addresses of contexts 1-3
 
 
 def _clean(line):
@@ -215,7 +216,7 @@ def _parse(line):
 
 def assemble(source, defines=None):
     """Assemble text into a Program, or raise AsmError with the line number."""
-    names, lines, ctx1_label = dict(defines or {}), [], None
+    names, lines, ctx_labels = dict(defines or {}), [], [None, None, None]
     for number, raw in enumerate(source.splitlines(), 1):
         line = _clean(raw)
         while True:
@@ -238,8 +239,8 @@ def assemble(source, defines=None):
                     name, value = line[4:].split(",", 1)
                     if name.strip() not in (defines or {}):  # a -D on the command line wins
                         names[name.strip()] = evaluate(value, names)
-                elif line.startswith(".ctx1"):
-                    ctx1_label = line[5:].strip()
+                elif re.match(r"\.ctx[123]\b", line):
+                    ctx_labels[int(line[4]) - 1] = line[5:].strip()
                 else:
                     pc += len(_translate(*_args(line), names, labels, pc, False))
             except (AsmError, IndexError) as err:
@@ -265,9 +266,11 @@ def assemble(source, defines=None):
                 pc += 1
         except (AsmError, ValueError, IndexError) as err:
             raise AsmError(f"line {number}: {line}: {err}") from err
-    if ctx1_label is not None and ctx1_label not in labels:
-        raise AsmError(f".ctx1: unknown label {ctx1_label}")
-    return Program(words, labels, labels.get(ctx1_label, 0) if ctx1_label else 0, listing)
+    for k, label in enumerate(ctx_labels, 1):
+        if label is not None and label not in labels:
+            raise AsmError(f".ctx{k}: unknown label {label}")
+    ctx = [labels[label] if label else 0 for label in ctx_labels]
+    return Program(words, labels, ctx[0], listing, ctx)
 
 
 def _args(line):
