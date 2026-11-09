@@ -29,6 +29,8 @@ EXTENSIONS = {
     "TSETR": ("11100111", {"s": 3}),          # 16-bit timer period from a register: LIN auto-baud, DALI
     "POLY": ("11101000", {"s": 3}),           # CRC polynomial from a register, so it doesn't hold one
     "CRC": ("11101001", {"r": 2, "dir": 1}),  # one CRC step on the bit last shifted: SD, CAN, USB, HDLC
+    "CMPU": ("11101010", {"a": 3, "b": 3}),   # unsigned compare: Z equal, F less than. Interval classing
+    "TCAP": ("11101011", {"r": 2, "tick": 1}),   # cycles between the last two ticks: rate-agnostic receive
 }
 
 # Listed in the order the map should read: frequent, wide formats first.

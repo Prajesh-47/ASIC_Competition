@@ -259,8 +259,8 @@ idle:   nop.t   side=0        ; r0 clocks
 
 ; PUSH sets F when the FIFO is full, so clear F and try until the word goes in. F is cleared through r3 and
 ; restored, since r0-r3 can all be live: shifting right and back loses only bit 0, which F holds, so it is
-; added back when it was 1. A tick nobody consumes sets F too, so the timer stops meanwhile.
-pushw:  tset    0
+; added back when it was 1. The timer runs on, since a missed tick sets M, not F. TSET HALF realigns it.
+pushw:
 pd:     shr     r3
         jmp     nf, pe
         shl     r3

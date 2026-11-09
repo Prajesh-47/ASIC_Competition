@@ -18,6 +18,7 @@ class Context:
         self.pc = pc
         self.R = [0, 0, 0, 0]
         self.SR = self.BC = self.TO = self.Z = self.F = 0
+        self.M = 0  # missed tick, until JMP M reads it
         self.stall = 0
         self.to_left = None
         self.halted = False
@@ -26,6 +27,8 @@ class Context:
         self.side_line = 15
         self.lfsr = 0xACE1
         self.tp = self.tcnt = 0
+        self.since = 0xFFFF  # cycles since the last tick, saturating. TCAP reads the latched interval
+        self.tint = 0xFFFF
         self.pending = False
         self.tick_now = False
         self.missed = False
@@ -171,9 +174,9 @@ class Splice:
                 self.exec_slot(c)
                 if self.two:
                     self.cur ^= 1
-        for c in self.ctx:  # a missed tick shows next cycle and beats an instruction writing F
+        for c in self.ctx:  # a missed tick shows next cycle and beats JMP M clearing it
             if c.missed:
-                c.F = 1
+                c.M = 1
         self.capture_step(*self.cap_cmd)
         self.run_bridges()
         for x in range(8):
@@ -227,6 +230,10 @@ class Splice:
                 c.tick_now = True
             else:
                 c.tcnt -= 1
+        if c.tick_now:  # latch the time between this tick and the one before, so firmware can read it late
+            c.tint, c.since = min(c.since + 1, 0xFFFF), 0
+        else:
+            c.since = min(c.since + 1, 0xFFFF)
         c.missed = c.tick_now and c.pending
         if c.tick_now:
             c.pending = True
@@ -392,6 +399,11 @@ class Splice:
             c.Z = int(c.R[f["d"]] == 0)
         elif op == "CMP":
             c.Z = int(self.read(c, f["a"]) == self.read(c, f["b"]))
+        elif op == "CMPU":  # unsigned: Z if equal, F if a < b
+            a, b = self.read(c, f["a"]), self.read(c, f["b"])
+            c.Z, c.F = int(a == b), int(a < b)
+        elif op == "TCAP":  # with .t: wait for a tick, then read the interval that ended at it
+            c.R[f["r"]] = c.tint
         elif op == "CMPI":
             c.Z = int(c.R[f["a"]] == f["v"])
         elif op == "SHR":
@@ -409,7 +421,9 @@ class Splice:
         elif op == "PROBE":
             c.Z = self.line(f["line"])
         elif op == "JMP":
-            taken = {0: True, 1: c.Z == 1, 2: c.Z == 0, 3: c.F == 1, 4: c.F == 0, 5: c.BC == 0, 6: c.BC != 0, 7: False}[f["c"]]
+            taken = {0: True, 1: c.Z == 1, 2: c.Z == 0, 3: c.F == 1, 4: c.F == 0, 5: c.BC == 0, 6: c.BC != 0, 7: c.M == 1}[f["c"]]
+            if f["c"] == 7:
+                c.M = 0
             self.cover(f"JMP.{f['c']}.{'taken' if taken else 'not'}")
             if taken:
                 next_pc = f["to"]

@@ -26,9 +26,9 @@ idle:   ldi     r3, 0
         ldi     r2, 0
         mov     r0, r1
 bit:    probe.t DM
-        jmp     z, high
+        jmp     hi, high
         probe   DP
-        jmp     nz, eop       ; both low: SE0
+        jmp     lo, eop       ; both low: SE0
         cmpi    r3, 0
         jmp     z, one
         ldi     r3, 0

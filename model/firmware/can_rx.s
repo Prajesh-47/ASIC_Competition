@@ -19,7 +19,7 @@
         tset    BIT
 idle:   ldi     r2, 10        ; a new frame needs 10 recessive bits first
 i1:     probe.t L
-        jmp     z, i2
+        jmp     hi, i2
         jmp     idle
 i2:     djnz    r2, i1
         ldi     r1, 0

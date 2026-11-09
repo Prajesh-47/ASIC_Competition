@@ -12,7 +12,7 @@ rst:    dly     3999
         set     L, 1
         dly     70 * US
         probe   L             ; a device answers by pulling low
-        jmp     z, fail
+        jmp     hi, fail
         delay   410 * US
         sri     CMD
         bci     8

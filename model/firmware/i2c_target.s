@@ -9,7 +9,7 @@
         ldi     r1, 0xFF
 idle:   wait    SDA, fall
         probe   SCL
-        jmp     nz, idle      ; SDA fell with SCL low: not a START
+        jmp     lo, idle      ; SDA fell with SCL low: not a START
         tsrc    SCL, rise
         bci     8
 adr:    inb.t   SDA, adr

@@ -48,7 +48,7 @@ s1:     add     r2, 1
         xor     r0, r1
 smp:    dly     8             ; let our own edge come back through the synchronizer
         probe   L
-        jmp     nz, lost
+        jmp     lo, lost
 stf:    cmpi    r2, 5
         jmp     nz, nx
         ldi     r2, 1

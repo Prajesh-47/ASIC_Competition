@@ -21,7 +21,7 @@ import operator
 import re
 import sys
 
-from .isa import COND, CRCDIR, OPERAND, PHASE, SRC, TABLE, WAITC, WANT, encode
+from .isa import COND, COND_ALIAS, CRCDIR, OPERAND, PHASE, SRC, TABLE, WAITC, WANT, encode
 
 
 class AsmError(Exception):
@@ -56,8 +56,9 @@ def evaluate(text, names):
 
 
 class Program:
-    def __init__(self, words, labels, ctx1, listing):
+    def __init__(self, words, labels, ctx1, listing, warnings=()):
         self.words, self.labels, self.ctx1, self.listing = words, labels, ctx1, listing
+        self.warnings = list(warnings)
 
 
 def _clean(line):
@@ -139,7 +140,8 @@ def _translate(mnemonic, args, flags, named, names, labels, pc, final):
     if op == "JMP":
         if len(args) == 1:
             return [(op, {"c": COND["AL"], "to": num(args[0])})]
-        return [(op, {"c": key(COND, args[0]), "to": num(args[1])})]
+        cond = COND_ALIAS.get(args[0].upper(), args[0])
+        return [(op, {"c": key(COND, cond), "to": num(args[1])})]
     if op == "CALL":
         return [(op, {"to": num(args[0])})]
     if op == "DJNZ":
@@ -176,8 +178,10 @@ def _translate(mnemonic, args, flags, named, names, labels, pc, final):
         return [(op, {"d": reg(args[0]), "s": key(OPERAND, args[1])})]
     if op == "MOV":
         return [(op, {"d": key(OPERAND, args[0]), "s": key(OPERAND, args[1])})]
-    if op == "CMP":
+    if op in ("CMP", "CMPU"):
         return [(op, {"a": key(OPERAND, args[0]), "b": key(OPERAND, args[1])})]
+    if op == "TCAP":
+        return [(op, {"r": reg(args[0]), "tick": tick})]
     if op in ("BCI", "PULLW"):
         return [(op, {"n": num(args[0])})]
     if op == "MSB":
@@ -267,7 +271,15 @@ def assemble(source, defines=None):
             raise AsmError(f"line {number}: {line}: {err}") from err
     if ctx1_label is not None and ctx1_label not in labels:
         raise AsmError(f".ctx1: unknown label {ctx1_label}")
-    return Program(words, labels, labels.get(ctx1_label, 0) if ctx1_label else 0, listing)
+    # PROBE sets Z when the line is high, so `jmp z` after it reads backwards. It caused 3 bugs in the
+    # adaptability trial. `jmp hi` / `jmp lo` say what's meant; this flags the old spelling.
+    warnings, previous = [], None
+    for pc_, _, line, number in listing:
+        mnemonic, _, _, args = _parse(line)
+        if previous == "PROBE" and mnemonic.upper() == "JMP" and args and args[0].upper() in ("Z", "NZ"):
+            warnings.append(f"line {number}: {line}: after PROBE, write jmp hi/lo (z means the line is high)")
+        previous = mnemonic.upper()
+    return Program(words, labels, labels.get(ctx1_label, 0) if ctx1_label else 0, listing, warnings)
 
 
 def _args(line):

@@ -245,6 +245,33 @@ async def test_rand_sequence_and_seed(dut):
 
 
 @cocotb.test()
+async def test_missed_tick_sets_m_not_f(dut):
+    """A timer nobody consumes used to set F, which also means a full FIFO and a timeout. It sets M now,
+    which JMP M reads and clears."""
+    await reset(dut)
+    prog = assemble("""
+        tset 5            ; ticks every 5 cycles, and nothing consumes them
+        dly  40
+        sri  0x22
+        push              ; room in the FIFO, so F must be clear
+        jmp  f, bad
+        tset 0            ; stop the timer, or the next tick would set M again
+        jmp  m, seen
+        jmp  bad
+seen:   jmp  m, bad       ; the read cleared it
+        set  8, 1
+        halt
+bad:    set  9, 1
+        halt
+""")
+    await load_program(dut, prog.words)
+    await start(dut)
+    await ClockCycles(dut.clk, 120)
+    aux = int(dut.uo_out.value) >> 4
+    assert aux == 0b0001, f"AUX_OUT={aux:04b}"
+
+
+@cocotb.test()
 async def test_push_to_full_fifo_sets_f(dut):
     """Data lost to a full FIFO has to be visible to firmware."""
     await reset(dut)
@@ -872,7 +899,8 @@ def state_differences(dut, model):
             "msb": (int(c.msb), engine.msb[k]), "lfsr": (c.lfsr, engine.lfsr[k]),
             "side": (c.side_line, engine.side_ln[k]), "tsl": (c.tsrc_line, engine.ts_line[k]),
             "tsw": (c.tsrc_want, engine.ts_want[k]), "poly": (c.poly, engine.poly[k]),
-            "lastb": (c.lastb, engine.lastb[k]),
+            "lastb": (c.lastb, engine.lastb[k]), "M": (c.M, engine.m[k]),
+            "since": (c.since, engine.since[k]), "tint": (c.tint, engine.tint[k]),
         }
         for r in range(4):
             pairs[f"R{r}"] = (c.R[r], engine.rr[k * 4 + r])

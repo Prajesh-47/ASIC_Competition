@@ -119,10 +119,10 @@ Per-pair FSM: `IDLE → A_HOLDS` (A low first: drive B low) / `B_HOLDS` (mirror)
 - **Taken jumps cost nothing extra.** The macro's read data is decoded in the same cycle. If this misses timing in RTL, the fallback is a fixed 1-cycle penalty.
 - **Pin effects land on the clock edge ending the instruction's first cycle.** Inputs pass a 2-flop synchronizer, so `IN`, `WAIT` and `PROBE` see a pin 2 cycles late. These latencies are fixed and published.
 - **First instruction runs a fixed 1 cycle after `START`.** The macro holds its output during delays.
-- **Missed tick:** if a tick fires while the last one is still pending, `F` is set, so a late program is visible and doesn't silently produce a wrong waveform. `F` changes on the following cycle, and beats any instruction writing `F` in the same cycle, so a miss can't be lost.
+- **Missed tick:** if a tick fires while the last one is still pending, the context's `M` flag is set, so a late program is visible and doesn't silently produce a wrong waveform. `M` changes on the following cycle and beats `JMP M` clearing it in the same cycle, so a miss can't be lost. `JMP M` reads and clears it. Until the adaptability trial this set `F`, which also means a full FIFO and a WAIT timeout, so a timer left running made both look true and firmware had to stop it first.
 
 ### 5.2 State
-Each context has its own `PC`, `R0`–`R3` (16-bit), `SR` (16-bit), `BC`, `TO`, flags `Z` and `F`, CRC polynomial and last shifted bit, link register, bit timer, tick source, side-set line, bit order and edge memory. Registers are 4 only: CAN and USB use all of them.
+Each context has its own `PC`, `R0`–`R3` (16-bit), `SR` (16-bit), `BC`, `TO`, flags `Z`, `F` and `M`, CRC polynomial and last shifted bit, link register, bit timer, tick source, side-set line, bit order and edge memory. Registers are 4 only: CAN and USB use all of them.
 
 **Scheduling is set at `START`:** one context at full rate, or two contexts at half rate each. Both share the program macro, reading on alternate cycles. The synthesis sketch doesn't duplicate the timer per context, so its 32K µm² estimate is low.
 
@@ -137,11 +137,11 @@ The qualifier `.t` on an instruction means: wait for the next tick, then execute
 |---|---|---|
 | Pins | `SET`, `MODE`, `OUT`, `IN`, `PROBE`, `WAIT` | `MODE` is the **injection primitive**. `OUT` with no-shift (`ns`) lets `IN` do the shift, for full duplex on one register |
 | **Fused bit loops** | **`OUTB`, `INB`** | **One bit, shift, and loop back while bits remain.** This is where most of the code saving comes from |
-| Timing | `WAITT`, `TSET`, `TSETR`, `TPHASE`, `TSRC`, `DLY`, `DLYR` | `TSETR` takes the period from a register. Added after the trial |
+| Timing | `WAITT`, `TSET`, `TSETR`, `TPHASE`, `TSRC`, `DLY`, `DLYR`, `TCAP` | `TSETR` takes the period from a register. Added after the trial. `TCAP rd` reads the cycles between the context's last two ticks, saturating at 0xFFFF, latched by hardware at every tick. With `TSRC line, both` that is the length of each line interval, so firmware can measure an edge after it has passed instead of waiting at it. `TCAP.t` reads the interval that ended at the tick it waited for |
 | FIFO | `PULLW`, `PULL`, `PUSH` | `PULLW` stalls until data arrives and loads `BC`. `PULL` doesn't stall, and sets `F` when empty |
 | Setup | `BCI`, `SRI`, `MSB`, `SIDE` | `SIDE` picks the line for side-set: a second line changing on the same edge |
-| Data | `LDI`, `MOV`, `ADD`, `ADDR`, `XOR`, `AND`, `CMP`, `CMPI`, `SHR`, `SHL`, `RAND`, `POLY`, `CRC` | `ADDR` adds a register operand, and sets `Z` but not `F`, like `ADD`. `CRC r, msb` or `lsb` is one CRC step on `Rr`, on the bit last shifted by `OUT`, `OUTB`, `IN` or `INB`, with the polynomial `POLY` set: left with a left-aligned polynomial, or right with a reflected one. It sets `Z` but not `F`. Shifts put the bit shifted out in `F`. `RAND` is one LFSR step, for seeded and repeatable fuzzing |
-| Control | `JMP`, `DJNZ`, `CALL`, `RET`, `TSTB`, `NOP`, `HALT` | `CALL` is one level. `TSTB` sets `Z` from the next output bit. `JMP` conditions: always, Z, NZ, F, !F, BC=0, BC≠0, and a spare |
+| Data | `LDI`, `MOV`, `ADD`, `ADDR`, `XOR`, `AND`, `CMP`, `CMPU`, `CMPI`, `SHR`, `SHL`, `RAND`, `POLY`, `CRC` | `ADDR` adds a register operand, and sets `Z` but not `F`, like `ADD`. `CRC r, msb` or `lsb` is one CRC step on `Rr`, on the bit last shifted by `OUT`, `OUTB`, `IN` or `INB`, with the polynomial `POLY` set: left with a left-aligned polynomial, or right with a reflected one. It sets `Z` but not `F`. Shifts put the bit shifted out in `F`. `RAND` is one LFSR step, for seeded and repeatable fuzzing. `CMPU a, b` is unsigned: `Z` when equal, `F` when a < b |
+| Control | `JMP`, `DJNZ`, `CALL`, `RET`, `TSTB`, `NOP`, `HALT` | `CALL` is one level. `TSTB` sets `Z` from the next output bit. `JMP` conditions: always, Z, NZ, F, !F, BC=0, BC≠0, M (missed tick; reads and clears). After `PROBE`, `Z` means the line is high, so the assembler takes `jmp hi` and `jmp lo` for `z` and `nz`, and warns on `z` or `nz` straight after a `PROBE` |
 | Chip | `IRQ`, `TRIG`, `CAPON`, `CAPOFF`, `CAPMARK` | |
 
 **Not yet run by any study program:** `IRQ`, `TRIG`, `CAPON`, `CAPOFF`, `CAPMARK`, `CMP`, `DLYR`, `PULL` and `TPHASE`. The golden model must test these first.
@@ -204,6 +204,8 @@ The qualifier `.t` on an instruction means: wait for the next tick, then execute
 | `11100111` | `TSETR` | s 3 |
 | `11101000` | `POLY` | s 3 |
 | `11101001` | `CRC` | r 2, dir 1 |
+| `11101010` | `CMPU` | a 3, b 3 |
+| `11101011` | `TCAP` | r 2, tick 1 |
 
 Field names: `line` 0–7 is a bus line and 8–11 is AUX; `side` is enable and value; `rel` branches back up to 15 words; `to` is an absolute address, 9 bits so the 512-word macro needs no ISA change, though the 256-word macro uses 8; `hl` selects `LDI`'s high or low byte; `sh` is `SRI`'s shift. The `stamp` bit in `WAIT` is held for the capture unit. `ADDR`, `TSETR`, `POLY` and `CRC` were added after v1 in free codes, so no opcode moved. The assembler picks `ADDR` and `TSETR` when the operand is a register: `add r0, r1`, `tset r1`. About 8.7% of the encoding space is still free.
 
