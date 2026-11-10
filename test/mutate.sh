@@ -139,5 +139,8 @@ run "ldp: address from the wrong register" $E "wire [8:0] ldp_src = rr[{c, ins[5
 run "ldp: no second slot" $E "is_ldp ? 16'd1 :" "is_ldp ? 16'd0 :"
 run "jmpr: lands one word late" $E ": is_jmpr   ? opnd_cmp[8:0]" ": is_jmpr   ? opnd_cmp[8:0] + 9'd1"
 run "jmpr: jumps to the wrong operand" $E ": is_jmpr   ? opnd_cmp[8:0]" ": is_jmpr   ? opnd_mov[8:0]"
+# Four contexts and links (explore/uarch-contexts, added to the script for v2)
+run "contexts: round robin wraps after context 2" $E "wire [CW-1:0] cur_nx = (cur == nctx_m1[CW-1:0] || cur == LAST)" "wire [CW-1:0] cur_nx = (cur == nctx_m1[CW-1:0] || cur == 2'd2)"
+run "links: link 1 never pops" $T ".pop(eng_pop && pull_from == 2'd2), .head(l1_head)" ".pop(1'b0), .head(l1_head)"
 rm -rf sim_build results.xml
 echo done | tee -a "$OUT"
