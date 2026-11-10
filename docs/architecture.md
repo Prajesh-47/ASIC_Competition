@@ -1,5 +1,5 @@
 # SPLICE — Programmable Bus Interposer ASIC
-**Architecture spec v0.1** · Jane Street Protocol Emulator ASIC Competition · Tiny Tapeout IHP CMOS5L, 6x4 tiles · Deadline Jan 18, 2027
+**Architecture spec v0.1** · Jane Street Protocol Emulator ASIC Competition · Tiny Tapeout IHP CMOS5L, 8x4 tiles · Deadline Jan 18, 2027
 
 > Working name: SPLICE. Rename freely.
 
@@ -233,7 +233,7 @@ Field names: `line` 0–7 is a bus line and 8–11 is AUX; `side` is enable and 
 - Fallback: latch RAM — 128×16 program + 64×16 capture. Architecture must work at either size (address widths parameterised).
 
 ### 7.1 Area probe (yosys 0.33, typ corner, synthesis only)
-Budget: the 6x4 die is 1289.28 × 710.64 µm = 916,214 µm² (`tile_sizes.yaml`). At the template's 60% density that is about 550,000 µm² of placeable cells, or about 23 µm² per cell at the 24K-cell guideline. Compare **area**, because memory cells are much larger than average.
+Budget (written for 6x4): the 6x4 die is 1289.28 × 710.64 µm = 916,214 µm² (`tile_sizes.yaml`). At the template's 60% density that is about 550,000 µm² of placeable cells, or about 23 µm² per cell at the 24K-cell guideline. The design now targets 8x4, 1724.16 × 710.64 µm = 1,225,257 µm², about 735,000 µm² placeable at 60%; the table below keeps its 6x4 percentages. Compare **area**, because memory cells are much larger than average.
 
 | Block | Cells | Mapped µm² | % of die | % of 550K |
 |---|---:|---:|---:|---:|
@@ -352,8 +352,8 @@ Host software (Python): assembler, loader, CLI (`python3 -m splice_host`: setup,
 - [ ] Program reload: a deselected design powers down and loses its state, so the host must reload after selection
 - [ ] Slew and capacitance violations at macro pins: clear in the real design (`macro/README.md`)
 - [x] Unified single-port memory conflicts with fixed cycle counts: resolved with two macros (section 7.3)
-- [ ] Does 6x4 fit engine + fabric + capture? (synth early, week 1–3)
-- [ ] 8x4 approval from Jane Street (would relax area)
+- [x] Does 6x4 fit engine + fabric + capture? Yes: every build through exp/integrate-1 closed on 6x4
+- [x] 8x4 approval: confirmed final by the organisers on 2026-11-09; the die is 1724.16 × 710.64 µm (+33.7%)
 - [ ] Exact pass-through latency through TT's pin mux (GL sim + reading TT mux docs)
 - [ ] ODB holdoff window on real buses: the register is decided (section 4.1), real thresholds are untested
 - [ ] USB and CAN receive, clock recovery and two protocols at once: not yet tried on ISA v1

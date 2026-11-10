@@ -3,7 +3,7 @@
 # SPLICE: programmable bus interposer ASIC
 
 Entry for the [Jane Street protocol emulator ASIC competition](https://blog.janestreet.com/protocol-emulator-asic-competition/).
-Tiny Tapeout, IHP 130 nm **CMOS5L**, **6x4 tiles**, 50 MHz.
+Tiny Tapeout, IHP 130 nm **CMOS5L**, **8x4 tiles**, 50 MHz.
 
 A protocol emulator you reprogram in firmware, including for protocols nobody planned for. The same
 cycle-exact engine can also sit **inline** on a live bus between two chips and alter traffic as it passes.

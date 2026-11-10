@@ -7,9 +7,9 @@ project:
   language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
   clock_hz:     50000000       # Clock frequency in Hz (or 0 if not applicable)
 
-  # How many tiles your design occupies? A single tile is about 167x108 uM.
-  # Jane Street protocol emulator competition allocation: 6x4.
-  tiles: "6x4"
+  # How many tiles your design occupies? A single tile is about 202x155 uM.
+  # Jane Street protocol emulator competition allocation: 8x4 (confirmed final 2026-11-09).
+  tiles: "8x4"
 
   # Your top module name must start with "tt_um_". Make it unique by including your github username:
   top_module:  "tt_um_prajesh47_splice"

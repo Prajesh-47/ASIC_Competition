@@ -28,7 +28,7 @@ middle of a live connection between two chips** and alter the traffic as it pass
 |---|---|
 | **Deadline** | January 18, 2027 |
 | **Prize** | Jane Street pays to fabricate the winners, around four designs, on a March 2027 shuttle (the shared chip run) |
-| **Chip** | Tiny Tapeout, IHP 130 nm CMOS5L process, 6x4 tiles, about 0.92 mm² of die |
+| **Chip** | Tiny Tapeout, IHP 130 nm CMOS5L process, 8x4 tiles, about 1.23 mm² of die (1724.16 × 710.64 µm) |
 | **Judged on** | No fixed weighting. **Flexibility is the main thing:** can it be reprogrammed for protocols it wasn't designed for? Then which protocols are shown, what's unique, and how it was designed and verified. They aren't looking for the fastest chip |
 | **You submit** | Public repo with RTL and tests, a passing Tiny Tapeout build, architecture and instruction set docs, an assembler with example programs, a verification write-up, and how AI tools were used |
 
