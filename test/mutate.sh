@@ -27,7 +27,10 @@ PY
     rm -rf "$dir"
     return
   fi
-  if python -m cocotb_tools.check_results results.xml >/dev/null 2>&1; then
+  if [ ! -f results.xml ]; then
+    # No results means the build or the test harness broke, not that a test caught the mutant
+    echo "NO RESULTS   $name" | tee -a "$OUT"
+  elif python -m cocotb_tools.check_results results.xml >/dev/null 2>&1; then
     echo "SURVIVED     $name" | tee -a "$OUT"
   else
     fails=$(grep -c '<failure' results.xml)
