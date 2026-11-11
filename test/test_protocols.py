@@ -11,6 +11,7 @@ import cocotb
 from cocotb.triggers import ClockCycles
 
 from test import HERE, assemble, capture, fifo_read, fifo_write, firmware, load_program, reset, spi_xfer, start, stop, write_reg  # noqa: F401
+from splice.isa import encode  # noqa: E402
 
 
 def level(out, oe, line, idle=1):
@@ -384,15 +385,43 @@ async def test_can_backs_off_when_arbitration_is_lost(dut):
     dut.uio_in.value = 0xFF
 
 
+async def load_beside_idle(dut, words, nctx):
+    """The program in context 0, and with nctx > 1 the other contexts halted beside it, each taking its slot."""
+    await load_program(dut, list(words) + [encode("HALT")])
+    if nctx > 1:
+        halt = len(words)
+        await write_reg(dut, 0, nctx - 1)
+        for reg in (4, 16, 18):
+            await write_reg(dut, reg, halt >> 8)
+            await write_reg(dut, reg + 1, halt & 0xFF)
+
+
 @cocotb.test()
 async def test_usb_low_speed_packet(dut):
     await reset(dut)
-    bit = 33
-    await load_program(dut, firmware("usb_ls_tx.s", BIT=bit).words)
+    await usb_tx_check(dut, "usb_ls_tx.s", 33)
+
+
+@cocotb.test()
+async def test_usb_low_speed_packet_line_coder(dut):
+    """v2 CODE: NRZI, stuffing and the D+/D- pair in hardware. The same checker, at USB's rate, at 6 cycles a
+    bit (software needs 14), and at USB's rate in one of four contexts."""
+    await reset(dut)
+    for bit, nctx in ((33, 1), (6, 1), (33, 4)):
+        dut._log.info(f"USB transmit with the line coder: {bit} cycles a bit, {nctx} contexts")
+        await usb_tx_check(dut, "usb_ls_tx_code.s", bit, nctx)
+
+
+async def usb_tx_check(dut, program, bit, nctx=1):
+    await stop(dut)
+    await load_beside_idle(dut, firmware(program, BIT=bit).words, nctx)
     sync, pid, data = 0x80, 0xC3, [0xFF, 0x3F]  # this data forces stuffed bits
     await fifo_write(dut, [sync | pid << 8, data[0] | data[1] << 8])
+    # The engine starts partway through the START transaction, so record from before it: at short bits SYNC
+    # is already going out by the time START returns
+    recording = cocotb.start_soon(capture(dut, 60 * bit + 400))
     await start(dut)
-    trace = await capture(dut, 60 * bit)
+    trace = await recording
     pair = [(level(o, e, 5, 1), level(o, e, 4, 0)) for o, e, _ in trace]  # (D-, D+)
     first = next(t for t in range(1, len(pair)) if pair[t] != pair[t - 1] and pair[t] == (0, 1))
     raw, prev, ones, t, se0, stuffed = [], (1, 0), 0, first + bit // 2, 0, 0
@@ -416,7 +445,7 @@ async def test_usb_low_speed_packet(dut):
         t += bit
     assert se0 >= 2, "no end of packet"
     assert stuffed >= 1, "this data should have forced a stuffed bit"
-    assert len(raw) == 48, f"{len(raw)} bits"
+    assert len(raw) == 48, f"{len(raw)} bits, {stuffed} stuffed: {raw}"
     byte = lambda i: sum(raw[i * 8 + k] << k for k in range(8))
     assert [byte(0), byte(1), byte(2), byte(3)] == [sync, pid] + data
     crc = 0xFFFF  # the residual rule from the USB specification
@@ -427,6 +456,7 @@ async def test_usb_low_speed_packet(dut):
             crc ^= 0x8005
     assert crc == 0x800D, f"CRC residual {crc:04x}"
     await stop(dut)
+    await write_reg(dut, 0, 0)
 
 
 # ------------------------------------------------------------------ Interposing on a live I2C bus
@@ -698,9 +728,9 @@ def usb_unpack(words):
     return bits + [(last >> i) & 1 for i in range(low + 1, 16)]
 
 
-async def usb_receive(dut, payloads, bit=100 / 3, ppm=0):
+async def usb_receive(dut, payloads, bit=100 / 3, ppm=0, program="usb_ls_rx.s", nctx=1):
     await stop(dut)
-    await load_program(dut, firmware("usb_ls_rx.s").words)
+    await load_beside_idle(dut, firmware(program).words, nctx)
     await start(dut)
     period = bit * (1_000_000 + ppm) / 1_000_000
     results = []
@@ -744,6 +774,20 @@ async def test_usb_ls_receive(dut):
     for ppm in (0, 15000, -15000):
         for got, sent in await usb_receive(dut, packets, ppm=ppm):
             assert got == sent, f"at {ppm} ppm: sent {sent}, got {got}"
+
+
+@cocotb.test()
+async def test_usb_ls_receive_line_coder(dut):
+    """v2 CODE: clock recovery, NRZI and destuffing in hardware, the same packets and clock errors, alone and
+    in one of four contexts, where the software receiver can't keep up."""
+    await reset(dut)
+    packets = [[0xC3, 0x12, 0x34], [0x4B] + [0xFF] * 8 + [0x00, 0x00], [0xD2], [0x4B, 0xFE, 0x7F, 0xFF, 0x01]]
+    for nctx in (1, 4):
+        for ppm in (0, 15000, -15000):
+            for got, sent in await usb_receive(dut, packets, ppm=ppm, program="usb_ls_rx_code.s", nctx=nctx):
+                assert got == sent, f"{nctx} contexts at {ppm} ppm: sent {sent}, got {got}"
+    await stop(dut)
+    await write_reg(dut, 0, 0)
 
 
 @cocotb.test()

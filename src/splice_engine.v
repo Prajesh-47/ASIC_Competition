@@ -76,6 +76,18 @@ module splice_engine #(parameter NCTX = 4) (
   reg [1:0]  ldp_dst [0:NCTX-1];
   reg [8:0]  ldp_addr[0:NCTX-1];   // with several contexts it's fetched in the slot before this one's next
   reg [1:0]  lw      [0:NCTX-1];   // LANES: OUT, IN, OUTB and INB move 1 << lw lines at once
+  // CODE, the line coder (v2): NRZI, bit stuffing, Manchester, a differential pair and clock recovery
+  reg        cd_nrzi [0:NCTX-1];
+  reg        cd_kind [0:NCTX-1];   // stuffing: 0 a 0 after n ones (USB, HDLC), 1 the complement after n equal (CAN)
+  reg [2:0]  cd_n    [0:NCTX-1];   // run length that forces a stuff bit, 0 off
+  reg        cd_man  [0:NCTX-1];
+  reg        cd_pol  [0:NCTX-1];   // Manchester half-bits: 0 !b then b (IEEE), 1 b then !b
+  reg        cd_diff [0:NCTX-1];   // also drive line ^ 1 with the complement
+  reg        cd_sync [0:NCTX-1];   // an edge on the TSRC line re-phases the period timer to half a period
+  reg [2:0]  run     [0:NCTX-1];   // the run of data bits, saturating at 7
+  reg        runv    [0:NCTX-1];   // the run's value, for kind 1
+  reg        half    [0:NCTX-1];   // Manchester: the first half-bit has gone out
+  reg        rxp     [0:NCTX-1];   // NRZI receive: the line at the previous coded IN
 
   reg        prim;            // first cycle of a run: only fetches
   localparam CW = NCTX > 2 ? 2 : 1;
@@ -100,10 +112,12 @@ module splice_engine #(parameter NCTX = 4) (
 
   // ------------------------------------------------------------------ Tick sources, every cycle
   wire [NCTX-1:0] tick_now;
+  wire [NCTX-1:0] resync;   // CODE sync: an edge on the TSRC line, so the period timer re-phases
   genvar g;
   generate
     for (g = 0; g < NCTX; g = g + 1) begin : ticks
       wire edge_seen = lines[ts_line[g]] != plines[ts_line[g]];
+      assign resync[g] = cd_sync[g] && edge_seen;
       assign tick_now[g] = (ts_want[g] != 2'd3)
           ? edge_seen && (ts_want[g] == 2'd2 || lines[ts_line[g]] == ts_want[g][0])
           : (tp[g] != 0 && tcnt[g] <= 17'd1);
@@ -130,6 +144,7 @@ module splice_engine #(parameter NCTX = 4) (
   wire is_wait   = ins[15:10] == 6'b101110;
   wire is_add    = ins[15:10] == 6'b101111;
   wire is_cmpi   = ins[15:10] == 6'b110000;
+  wire is_code   = ins[15:10] == 6'b110001;
   wire is_and    = ins[15:8] == 8'b11001101;
   wire is_bci    = ins[15:8] == 8'b11001110;
   wire is_capmark = ins[15:8] == 8'b11001111;
@@ -218,13 +233,45 @@ module splice_engine #(parameter NCTX = 4) (
   // Lanes: a group of W = 1 << lw lines from the lane-aligned base ln_a, line base + k being bit k
   wire [1:0]  lw_c = lw[c];
   wire        msb_c = msb[c];
+  // CODE at one lane. What repeats an instruction is worked out from registers alone, and the instruction
+  // only selects, as for the loops below: a stuff bit, or Manchester's first half-bit.
+  wire        cd_any   = cd_nrzi[c] || cd_n[c] != 3'd0;
+  wire        cd_tx_on = lw[c] == 2'd0 && (cd_any || cd_man[c]);
+  wire        cd_rx_on = lw[c] == 2'd0 && cd_any && !cd_man[c];
+  wire        stuff_due = cd_n[c] != 3'd0 && run[c] == cd_n[c];
+  wire        rep_tx_r = cd_tx_on && (cd_man[c] ? !half[c] : stuff_due);
+  wire        rep_rx_r = cd_rx_on && stuff_due;
+  wire        shop_tx  = (is_out && !ins[6]) || is_outb;
+  wire        shop_rx  = is_in || is_inb;
+  wire        code_tx  = cd_tx_on && shop_tx;
+  wire        code_rx  = cd_rx_on && shop_rx;
+  wire        rep      = (shop_tx && rep_tx_r) || (shop_rx && rep_rx_r);
+  wire        rx_raw   = lines[ln_a];
+  wire        rx_bit   = (cd_rx_on && cd_nrzi[c]) ? rx_raw == rxp[c] : rx_raw;   // NRZI: no change is a 1
+  wire        stuff_bit = cd_kind[c] ? !runv[c] : 1'b0;
+  wire        rx_stuff_err = code_rx && stuff_due && rx_bit != stuff_bit;
+  wire        tx_b     = msb[c] ? sr[c][15] : sr[c][0];
+  wire        tx_d     = stuff_due ? stuff_bit : tx_b;
+  wire        tx_cur   = ln_a < 4'd12 ? eng[ln_a] : 1'b0;
+  wire        man_first = cd_pol[c] ? tx_b : !tx_b;
+  wire        tx_line  = cd_man[c] ? (half[c] ? !man_first : man_first)
+                       : cd_nrzi[c] ? (tx_d ? tx_cur : !tx_cur) : tx_d;
+  wire [3:0]  ln_pair  = ln_a ^ 4'd1;
+  // The run after a data or stuff bit d
+  wire        run_d    = code_rx ? rx_bit : tx_d;
+  wire [2:0]  run_inc  = run[c] == 3'd7 ? 3'd7 : run[c] + 3'd1;
+  wire [2:0]  run_nx   = stuff_due ? {2'd0, cd_kind[c]}
+                       : cd_kind[c] ? ((run[c] != 3'd0 && run_d == runv[c]) ? run_inc : 3'd1)
+                       : (run_d ? run_inc : 3'd0);
+  wire        runv_nx  = (stuff_due || cd_kind[c]) ? run_d : runv[c];
+
   reg  [7:0]  grp_out, grp_in;
   reg  [15:0] sr_shifted_out, sr_shifted_in;
   always @* begin
     case (lw_c)
       2'd0: begin
         grp_out = {7'd0, msb_c ? sr_c[15] : sr_c[0]};
-        grp_in = {7'd0, lines[ln_a]};
+        grp_in = {7'd0, rx_bit};
         sr_shifted_out = msb_c ? {sr_c[14:0], 1'b0} : {1'b0, sr_c[15:1]};
         sr_shifted_in = msb_c ? {sr_c[14:0], grp_in[0]} : {grp_in[0], sr_c[15:1]};
       end
@@ -321,7 +368,7 @@ module splice_engine #(parameter NCTX = 4) (
                       : is_jmpr   ? opnd_cmp[8:0]
                       : to_back   ? pc_back
                       :             pc_inc;
-  wire [8:0] pc_next = ex ? pc_taken : pc[c];
+  wire [8:0] pc_next = (ex && !rep) ? pc_taken : pc[c];   // CODE: a repeat keeps the PC
 
   // With more than one context the next slot is another context's, and its PC is already settled. LDP reads
   // its word in place of an instruction fetch: straight away with one context, and with several in the slot
@@ -342,6 +389,10 @@ module splice_engine #(parameter NCTX = 4) (
       if (is_out || is_outb)
         for (l = 0; l < 12; l = l + 1)
           if ((l >> lw_c) == (ln_a >> lw_c)) eng_nx[l] = grp_out[l[2:0] & ((3'd1 << lw_c) - 3'd1)];
+      if (code_tx) begin
+        if (ln_a < 4'd12) eng_nx[ln_a] = tx_line;
+        if (cd_diff[c] && ln_pair < 4'd12) eng_nx[ln_pair] = !tx_line;
+      end
       if (is_mode) src_nx[3 * ins[10:8] +: 3] = ins[7:5];
     end
   end
@@ -429,8 +480,8 @@ module splice_engine #(parameter NCTX = 4) (
   wire f_wd = (is_pull && in_empty) || is_push || (is_shr && sft_reg[0]) || (is_shl && sft_reg[15])
            || (is_cmpu && opnd_cmp < opnd_mov);
 
-  wire sr_out = (is_out && !ins[6]) || is_outb;
-  wire sr_in = is_in || is_inb;
+  wire sr_out = ((is_out && !ins[6]) || is_outb) && !rep;
+  wire sr_in = (is_in || is_inb) && !rep;
   wire sr_head = (is_pull && !in_empty) || is_pullw;
   wire mov_sr = is_mov && ins[7:5] == 3'd4;
   wire sr_we = sr_out || sr_in || sr_head || is_sri || mov_sr;
@@ -481,6 +532,17 @@ module splice_engine #(parameter NCTX = 4) (
         poly[i] <= 0;
         lastb[i] <= 0;
         lw[i] <= 0;
+        cd_nrzi[i] <= 0;
+        cd_kind[i] <= 0;
+        cd_n[i] <= 0;
+        cd_man[i] <= 0;
+        cd_pol[i] <= 0;
+        cd_diff[i] <= 0;
+        cd_sync[i] <= 0;
+        run[i] <= 0;
+        runv[i] <= 0;
+        half[i] <= 0;
+        rxp[i] <= 0;
         ldp_pend[i] <= 0;
         ldp_dst[i] <= 0;
         ldp_addr[i] <= 0;
@@ -495,7 +557,7 @@ module splice_engine #(parameter NCTX = 4) (
       // Timers run on every clock, for both contexts.
       for (i = 0; i < NCTX; i = i + 1) begin
         if (ts_want[i] == 2'd3 && tp[i] != 0)
-          tcnt[i] <= tcnt[i] <= 17'd1 ? {1'b0, tp[i]} : tcnt[i] - 17'd1;
+          tcnt[i] <= resync[i] ? {2'd0, tp[i][15:1]} : tcnt[i] <= 17'd1 ? {1'b0, tp[i]} : tcnt[i] - 17'd1;
         if (tick_now[i]) pending[i] <= 1'b1;
         // TCAP: the interval that ends at each tick is latched, so firmware can read it late
         if (tick_now[i]) begin
@@ -572,8 +634,21 @@ module splice_engine #(parameter NCTX = 4) (
                 pending[c] <= 1'b0;
               end
               if (is_poly) poly[c] <= opnd_cmp;
-              if (is_out || is_outb) lastb[c] <= grp_out;
-              if (is_in || is_inb) lastb[c] <= grp_in;
+              if ((is_out || is_outb) && !rep) lastb[c] <= grp_out;
+              if ((is_in || is_inb) && !rep) lastb[c] <= grp_in;
+              if (is_code) begin
+                {cd_nrzi[c], rxp[c], cd_kind[c], cd_n[c], cd_man[c], cd_pol[c], cd_diff[c], cd_sync[c]} <= ins[9:0];
+                run[c] <= 3'd0;
+                runv[c] <= 1'b0;
+                half[c] <= 1'b0;
+              end
+              if (code_tx && cd_man[c]) half[c] <= !half[c];
+              if ((code_tx && !cd_man[c]) || code_rx) begin
+                run[c] <= run_nx;
+                runv[c] <= runv_nx;
+              end
+              if (code_rx) rxp[c] <= rx_raw;
+              if (rx_stuff_err) f[c] <= 1'b1;
               if (is_lanes) lw[c] <= ins[7:6];
               if (is_ldp) begin
                 ldp_pend[c] <= 1'b1;

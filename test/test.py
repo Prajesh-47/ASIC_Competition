@@ -858,6 +858,11 @@ def random_program(rng, length, ctx1):
     starts = set(ctx1) if isinstance(ctx1, (list, tuple)) else {ctx1}
     park = encode("WAIT", line=PARK_LINE, c=0, stamp=0)
     words = [park, encode("TSET", p=rng.randrange(1, 30))]
+    # AUX_IN3 has just dropped and usually stays low a while, so a 2-cycle timeout on it going high usually
+    # expires: a thin bin otherwise. No random draws, so nothing after it changes
+    words += [encode("LDI", r=0, hl=0, v=2), encode("MOV", d=6, s=0), encode("WAIT", line=PARK_LINE, c=1, stamp=0)]
+    # Likewise a fall can't come while it stays low, so WAIT FALL times out: also thin once CODE came in
+    words += [encode("MOV", d=6, s=0), encode("WAIT", line=PARK_LINE, c=3, stamp=0)]
     words += [encode("LDI", r=0, hl=0, v=rng.randrange(1, 40)), encode("MOV", d=6, s=0)]  # set a timeout
     if rng.random() < 0.7:
         words.append(encode("CAPON"))
@@ -870,6 +875,30 @@ def random_program(rng, length, ctx1):
     # CRCW at each width: random code reached it at 4 lanes zero times in 80 programs once 4 contexts came in
     words += [encode("LANES", w=rng.randrange(4)),
               encode("CRC", r=rng.randrange(4), dir=rng.randrange(2), word=1, lane=rng.randrange(8))]
+    # INB at 4 lanes, one group: random code stopped reaching it once CODE lengthened the prologue
+    words += [encode("LANES", w=2), encode("BCI", n=1), encode("INB", line=rng.randrange(8), tick=0, side=0, rel=0)]
+    # The line coder at one lane. Straight-line first: SR all ones under "ones 1", so the second OUT must
+    # send a stuff bit, then plain coded receive under "equal 3". Random code reached neither reliably
+    line = rng.randrange(12)
+    words += [encode("LANES", w=0), encode("LDI", r=0, hl=0, v=0xFF), encode("LDI", r=0, hl=1, v=0xFF),
+              encode("MOV", d=4, s=0),
+              encode("CODE", nrzi=rng.randrange(2), kind=0, n=1, diff=rng.randrange(2)),
+              encode("OUT", line=line, ns=0, tick=0, side=0, dly=0),
+              encode("OUT", line=line, ns=0, tick=0, side=0, dly=0),
+              encode("CODE", kind=1, n=3), encode("IN", line=rng.randrange(12), tick=0, side=0, dly=0),
+              encode("IN", line=rng.randrange(12), tick=0, side=0, dly=0)]
+    # Lines 12-15 read 1, so under "ones 1" the second IN finds a 1 where the stuff bit should be 0
+    words += [encode("CODE", kind=0, n=1), encode("IN", line=12, tick=0, side=0, dly=0),
+              encode("IN", line=12, tick=0, side=0, dly=0)]
+    # A taken JMP F: shifting out a 1 sets F, and the jump goes to the next word. A thin bin otherwise
+    words += [encode("LDI", r=0, hl=0, v=1), encode("SHR", r=0)]
+    words.append(encode("JMP", c=COND["F"], to=len(words) + 1))
+    # Then a random configuration, with a short stuffing run so stuff bits come up in random data
+    words += [encode("LANES", w=0),
+              encode("CODE", nrzi=rng.randrange(2), lvl=rng.randrange(2), kind=rng.randrange(2),
+                     n=rng.choice([0, 1, 2, 3]), man=int(rng.random() < 0.25), pol=rng.randrange(2),
+                     diff=rng.randrange(2), sync=rng.randrange(2))]
+    assert len(words) < min({s for s in starts if s >= 0} | {length}), "the prologue runs into a context's start address"
     choices = [op for op in TABLE if op not in MODEL_ONLY]
     while len(words) < length - 1:
         pc = len(words)
@@ -877,7 +906,7 @@ def random_program(rng, length, ctx1):
             words.append(park)
             continue
         if rng.random() < 0.02:  # reserved encodings must behave as NOP
-            words.append(rng.choice([0xC400, 0xC800, 0xCC00, 0xA800, 0xB000, 0xE5C0, 0xF000, 0xF7FF, 0xFFFF]))
+            words.append(rng.choice([0xC800, 0xCC00, 0xA800, 0xB000, 0xE5C0, 0xF000, 0xF7FF, 0xFFFF]))
             continue
         op = rng.choice(choices)
         chance = rng.random()
@@ -965,6 +994,11 @@ def state_differences(dut, model):
             "since": (c.since, engine.since[k]), "tint": (c.tint, engine.tint[k]),
             "lanes": (c.lanes.bit_length() - 1, engine.lw[k]),
             "ldp": (int(c.ldp is not None), engine.ldp_pend[k]),
+            "cd_nrzi": (c.cd_nrzi, engine.cd_nrzi[k]), "cd_kind": (c.cd_kind, engine.cd_kind[k]),
+            "cd_n": (c.cd_n, engine.cd_n[k]), "cd_man": (c.cd_man, engine.cd_man[k]),
+            "cd_pol": (c.cd_pol, engine.cd_pol[k]), "cd_diff": (c.cd_diff, engine.cd_diff[k]),
+            "cd_sync": (c.cd_sync, engine.cd_sync[k]), "run": (c.run, engine.run[k]),
+            "runv": (c.runv, engine.runv[k]), "half": (c.half, engine.half[k]), "rxp": (c.rxp, engine.rxp[k]),
         }
         for r in range(4):
             pairs[f"R{r}"] = (c.R[r], engine.rr[k * 4 + r])
@@ -988,7 +1022,7 @@ async def differential_once(dut, seed, cycles, two):
     or to the links between contexts."""
     rng = random.Random(seed)
     nctx = two if not isinstance(two, bool) else (2 if two else 1)
-    length = 48 if nctx <= 2 else 64
+    length = {1: 64, 2: 96, 3: 128}.get(nctx, 160)  # every context's start well past random_program's prologue
     starts = [length * k // nctx for k in range(1, nctx)] + [0] * (3 - (nctx - 1))
     words = random_program(rng, length, starts[:nctx - 1] if nctx > 1 else -1)
     odrain, fast = rng.getrandbits(8), rng.getrandbits(8)
@@ -1150,6 +1184,9 @@ async def test_differential_covered_every_instruction(dut):
     bins += [f"{op}.t" for op, (_, fields) in TABLE.items() if any(name == "tick" for name, _ in fields)]
     # LANES: every shift at every width, and CRCW at every width
     bins += [f"{op}.w{w}" for op in ("OUT", "IN", "OUTB", "INB", "CRCW") for w in (1, 2, 4, 8)]
+    # CODE: every coded path, a stuff error on receive, and a clock-recovery re-phase
+    bins += ["CODE.man", "CODE.stuff.tx", "CODE.nrzi.tx", "CODE.data.tx", "CODE.stuff.rx", "CODE.nrzi.rx",
+             "CODE.data.rx", "CODE.stufferr", "CODE.sync"]
     missing = sorted(b for b in bins if b not in COVERAGE)
     dut._log.info(f"coverage: {len(bins) - len(missing)}/{len(bins)} bins, {sum(COVERAGE.values())} events")
     if GATE_LEVEL:  # far fewer runs at gate level, so this is only reported

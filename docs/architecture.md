@@ -143,6 +143,7 @@ The qualifier `.t` on an instruction means: wait for the next tick, then execute
 | FIFO | `PULLW`, `PULL`, `PUSH` | `PULLW` stalls until data arrives and loads `BC`. `PULL` doesn't stall, and sets `F` when empty |
 | Setup | `BCI`, `SRI`, `MSB`, `SIDE` | `SIDE` picks the line for side-set: a second line changing on the same edge |
 | **Lanes** | `LANES w` | `OUT`, `IN`, `OUTB` and `INB` move 1, 2, 4 or 8 lines at once: the lane group is the lane-aligned block of lines containing the named one, line base+k being bit k, and `SR` shifts by the width. `BC` counts groups. SD 4-bit, QSPI, eMMC 8-bit and parallel buses. Per context; `LANES 1` is the v1 behaviour |
+| **Line coder** | `CODE` | Per context, at `LANES 1` (v2). Options: `nrzi`; `ones n` (a 0 after n ones: USB 6, HDLC 5) or `equal n` (the complement after n equal bits: CAN 5); `man` (Manchester, IEEE half-bits `!b, b`, or `man thomas` for `b, !b`); `diff` (also drive line ^ 1 with the complement: USB D+/D-, RS-485); `lvl` (NRZI receive's starting level); `sync` (clock recovery: an edge on the `TSRC` line re-phases the period timer to half a period, so ticks land mid-bit). `OUT` and `OUTB` code what they send, and `IN` and `INB` decode and destuff what they read. A stuff bit, or Manchester's first half-bit, repeats the instruction at its next tick without shifting or counting, so `BC`, loops and `CRC` see data bits only. A wrong stuff bit on receive sets `F`. Manchester is transmit only, and doesn't combine with NRZI or stuffing. `code off` clears it |
 | Tables | `LDP rd, rs`, `JMPR s` | `LDP` reads the program word at the address in `rs` into `rd`, taking 2 of the context's slots: the word is fetched in place of that context's next instruction fetch. `JMPR` jumps to a register or operand. Together: 4B/5B and other code tables, and jump tables for protocol state machines. `.word` puts data in the program |
 | Data | `LDI`, `MOV`, `ADD`, `ADDR`, `XOR`, `AND`, `CMP`, `CMPU`, `CMPI`, `SHR`, `SHL`, `RAND`, `POLY`, `CRC`, `CRCW` | `ADDR` adds a register operand, and sets `Z` but not `F`, like `ADD`. `CRC r, msb` or `lsb` is one CRC step on `Rr`, on the bit last shifted by `OUT`, `OUTB`, `IN` or `INB`, with the polynomial `POLY` set: left with a left-aligned polynomial, or right with a reflected one. It sets `Z` but not `F`. With lanes, `CRC r, dir, lane` steps on one lane's bit, and `CRCW r, dir, lane` steps one lane's 4 bits of `SR` (2 at 8 lanes) in one cycle, for per-line CRCs like SD's four CRC-16s. Shifts put the bit shifted out in `F`. `RAND` is one LFSR step, for seeded and repeatable fuzzing. `CMPU a, b` is unsigned: `Z` when equal, `F` when a < b |
 | Control | `JMP`, `DJNZ`, `CALL`, `RET`, `TSTB`, `NOP`, `HALT` | `CALL` is one level. `TSTB` sets `Z` from the next output bit. `JMP` conditions: always, Z, NZ, F, !F, BC=0, BC≠0, M (missed tick; reads and clears). After `PROBE`, `Z` means the line is high, so the assembler takes `jmp hi` and `jmp lo` for `z` and `nz`, and warns on `z` or `nz` straight after a `PROBE` |
@@ -174,7 +175,7 @@ The qualifier `.t` on an instruction means: wait for the next tick, then execute
 | `101110` | `WAIT` | line 4, c 2, stamp 1 |
 | `101111` | `ADD` | r 2, v 8 |
 | `110000` | `CMPI` | a 2, v 8 |
-| `110001` | `(reserved) CODE` | mode 4, n 3, pair 3 |
+| `110001` | `CODE` | nrzi 1, lvl 1, kind 1, n 3, man 1, pol 1, diff 1, sync 1 |
 | `110010` | `(reserved) CODE2` | mode 4, n 3, pair 3 |
 | `11001100` | `(reserved) CRCSR` | inv 1, keep 1, shift 1 |
 | `11001101` | `AND` | d 2, s 3 |
@@ -216,12 +217,12 @@ The qualifier `.t` on an instruction means: wait for the next tick, then execute
 
 Field names: `line` 0–7 is a bus line and 8–11 is AUX; `side` is enable and value; `rel` branches back up to 15 words; `to` is an absolute address, 9 bits, for the 512-word program macro (v2; v1 had 256 words); `hl` selects `LDI`'s high or low byte; `sh` is `SRI`'s shift. The `stamp` bit in `WAIT` is held for the capture unit. `ADDR`, `TSETR`, `POLY` and `CRC` were added after v1 in free codes, so no opcode moved. The assembler picks `ADDR` and `TSETR` when the operand is a register: `add r0, r1`, `tset r1`. `LDP`, `JMPR` and `LANES`, and `CRC`'s `word` and `lane` fields, came from `explore/isa-lanes-int` (lab/explore/isa.md) and were approved for v2 on 2026-11-10; every program that doesn't use them behaves as before. That branch's `ROUTE` mailbox (`11101100`) was dropped, since the link FIFOs do the same job for any pair of contexts; its code is free again. About 6.7% of the encoding space is free.
 
-**Reserved encodings:** `ARM` and `MATCH` for hardware match rules, `CODE`, `CODE2` and `CRCSR` for the line coder (section 5.6).
+**Reserved encodings:** `ARM` and `MATCH` for hardware match rules, `CODE2` and `CRCSR` (left over from the line-coder study; `CODE` itself is built in v2).
 
 ### 5.6 Optional hardware
 | Feature | Status | Why | Area (sketch) |
 |---|---|---|---|
-| **Line coder:** CRC, bit stuffing, NRZI, Manchester, arbitration | Build; **first on the cut list**. Replaces the old `CRC` opcode | Makes USB and CAN programs about 60% smaller, and is the only route to 10 Mbit Ethernet transmit. Software is a working fallback for USB and CAN | About 8.5K µm² |
+| **Line coder (`CODE`):** NRZI, bit stuffing, Manchester, differential pair, clock recovery | **Built in v2** (CRC is the separate `CRC`/`CRCW`; arbitration stays in firmware) | USB LS transmit 29 words against 59 and down to 6 cycles a bit against 14; receive 27 words against 57, 12 cycles a bit against 33. **Both run at USB's rate in one of four contexts, where the software versions can't keep up** (`test_protocols.py`, the same wire checkers as the software versions) | Measured at gds |
 | **Hardware match rules** | **Week-7 stretch** | Engine-free rules on live traffic. Unique among the entrants I surveyed, but only tested on UART so far, so they must also work on SPI and I2C | About 30K µm² |
 
 ## 6. Capture unit

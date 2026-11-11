@@ -159,6 +159,32 @@ def _translate(mnemonic, args, flags, named, names, labels, pc, final):
     if op in ("CRC", "CRCW"):  # crc r, msb[, lane]: the bit last shifted. crcw r, msb, lane: a word of SR
         lane = num(args[2]) if len(args) > 2 else 0
         return [("CRC", {"r": reg(args[0]), "dir": key(CRCDIR, args[1]), "word": int(op == "CRCW"), "lane": lane})]
+    if op == "CODE":  # code off | code nrzi, ones 6, diff, lvl 1 | code equal 5 | code man [thomas]
+        f = {"nrzi": 0, "lvl": 0, "kind": 0, "n": 0, "man": 0, "pol": 0, "diff": 0, "sync": 0}
+        for arg in args:
+            words = arg.split()
+            name = words[0].upper()
+            if name == "OFF" and len(args) == 1:
+                continue
+            if name == "NRZI":
+                f["nrzi"] = 1
+            elif name == "SYNC":  # clock recovery: an edge on the TSRC line re-phases the period timer
+                f["sync"] = 1
+            elif name == "DIFF":  # also drive line ^ 1 with the complement: USB D+/D-, RS-485
+                f["diff"] = 1
+            elif name in ("ONES", "EQUAL"):
+                f["kind"], f["n"] = int(name == "EQUAL"), num(words[1])
+                if not 1 <= f["n"] <= 7:
+                    raise AsmError("stuffing takes a run of 1 to 7 bits")
+            elif name == "LVL":
+                f["lvl"] = num(words[1])
+            elif name == "MAN":
+                f["man"], f["pol"] = 1, int(len(words) > 1 and words[1].upper() == "THOMAS")
+            else:
+                raise AsmError(f"code: unknown option {arg}")
+        if f["man"] and (f["nrzi"] or f["n"]):
+            raise AsmError("Manchester doesn't combine with NRZI or stuffing")
+        return [(op, f)]
     if op == "LANES":
         width = num(args[0])
         if width not in (1, 2, 4, 8):

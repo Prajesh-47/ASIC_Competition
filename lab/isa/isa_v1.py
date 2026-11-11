@@ -15,7 +15,8 @@ TABLE["TSTB"] = (8, {})
 for op in ("IRQ", "TRIG", "CAPON", "CAPOFF", "CAPMARK"):
     TABLE[op] = (8, {})
 RESERVED = {
-    "(reserved) CODE": (6, {"mode": 4, "n": 3, "pair": 3}),
+    # v2 line coder: NRZI, bit stuffing and Manchester on single-lane OUT, OUTB, IN and INB
+    "CODE": (6, {"nrzi": 1, "lvl": 1, "kind": 1, "n": 3, "man": 1, "pol": 1, "diff": 1, "sync": 1}),
     "(reserved) CODE2": (6, {"mode": 4, "n": 3, "pair": 3}),
     "(reserved) CRCSR": (8, {"inv": 1, "keep": 1, "shift": 1}),
     "(reserved) ARM": (5, {"rule": 1, "trig": 3, "c": 1, "line": 3, "src": 3}),
@@ -41,7 +42,7 @@ EXTENSIONS = {
 
 # Listed in the order the map should read: frequent, wide formats first.
 ORDER = ["TSET", "JMP", "CALL", "DLY", "LDI", "SRI", "SET", "MODE", "OUT", "IN", "OUTB", "INB", "DJNZ",
-         "(reserved) ARM", "(reserved) MATCH", "WAIT", "ADD", "CMPI", "(reserved) CODE", "(reserved) CODE2"]
+         "(reserved) ARM", "(reserved) MATCH", "WAIT", "ADD", "CMPI", "CODE", "(reserved) CODE2"]
 
 
 def assign():

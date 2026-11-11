@@ -38,6 +38,10 @@ class Context:
         self.ldp = None  # LDP waiting for its word: (register, address)
         self.lanes = 1  # LANES: how many lines one OUT, IN, OUTB or INB moves, 1, 2, 4 or 8
         self.last = [1] * 12
+        # CODE, the line coder (v2): config, then the run of data bits, Manchester's half, NRZI receive level
+        self.cd_nrzi = self.cd_kind = self.cd_n = self.cd_man = self.cd_pol = self.cd_diff = self.cd_sync = 0
+        self.run = self.runv = self.half = 0
+        self.rxp = 0
 
 
 class Splice:
@@ -248,11 +252,15 @@ class Splice:
             bit, was = self.line(c.tsrc_line), self.prev[c.tsrc_line] if c.tsrc_line < 12 else 1
             c.tick_now = bit != was and (c.tsrc_want == 2 or bit == c.tsrc_want)
         elif c.tp:
+            # CODE sync: an edge on the TSRC line re-phases the timer to half a period, so the next tick
+            # lands mid-bit. A tick due this cycle still fires
+            line = c.tsrc_line
+            edge = c.cd_sync and self.line(line) != (self.prev[line] if line < 12 else 1)
             if c.tcnt <= 1:
-                c.tcnt = c.tp
                 c.tick_now = True
-            else:
-                c.tcnt -= 1
+            c.tcnt = (c.tp >> 1) if edge else c.tp if c.tcnt <= 1 else c.tcnt - 1
+            if edge:
+                self.cover("CODE.sync")
         if c.tick_now:  # latch the time between this tick and the one before, so firmware can read it late
             c.tint, c.since = min(c.since + 1, 0xFFFF), 0
         else:
@@ -288,6 +296,64 @@ class Splice:
         for k in range(w):
             self.drive(base + k, (group >> k) & 1)
 
+    # ------------------------------------------------------------------ CODE, the line coder (v2)
+    def coded_tx(self, c, op, f):
+        """OUT with shift and OUTB at one lane, with any of NRZI, stuffing or Manchester on."""
+        return (c.lanes == 1 and (c.cd_nrzi or c.cd_n or c.cd_man)
+                and (op == "OUTB" or (op == "OUT" and not f["ns"])))
+
+    def coded_rx(self, c, op):
+        """IN and INB at one lane, with NRZI or stuffing on. Manchester is transmit only."""
+        return c.lanes == 1 and not c.cd_man and (c.cd_nrzi or c.cd_n) and op in ("IN", "INB")
+
+    @staticmethod
+    def stuff_due(c):
+        return c.cd_n != 0 and c.run == c.cd_n
+
+    @staticmethod
+    def run_after(c, d, stuffed):
+        """The run of data bits after bit d: ones for kind 0 (USB, HDLC), equal bits for kind 1 (CAN)."""
+        if stuffed:
+            return (1 if c.cd_kind else 0), d
+        if c.cd_kind:
+            return (min(c.run + 1, 7) if c.run and d == c.runv else 1), d
+        return (min(c.run + 1, 7) if d else 0), c.runv
+
+    def code_drive(self, c, line, v):
+        self.drive(line, v)
+        if c.cd_diff:  # the complement on the other line of the pair: USB D+ and D-, RS-485
+            self.drive(line ^ 1, 1 - v)
+
+    def code_tx(self, c, f, cur):
+        """Drives the coded line. Returns True when the instruction repeats: a stuff bit or a first half-bit."""
+        b = self.sbit(c)
+        if c.cd_man:
+            first = (b if c.cd_pol else 1 - b)
+            self.code_drive(c, f["line"], first if not c.half else 1 - first)
+            c.half = 1 - c.half
+            if c.half:
+                return True
+            c.lastb = b
+            return False
+        stuffed = self.stuff_due(c)
+        d = (1 - c.runv if c.cd_kind else 0) if stuffed else b
+        self.code_drive(c, f["line"], (cur if d else 1 - cur) if c.cd_nrzi else d)
+        c.run, c.runv = self.run_after(c, d, stuffed)
+        if not stuffed:
+            c.lastb = b
+        return stuffed
+
+    def code_rx(self, c, f):
+        """Samples and decodes one bit. Returns (repeat, bit): repeat for a stuff bit, which sets F if wrong."""
+        s = self.line(f["line"])
+        d = int(s == c.rxp) if c.cd_nrzi else s
+        c.rxp = s
+        stuffed = self.stuff_due(c)
+        if stuffed and d != (1 - c.runv if c.cd_kind else 0):
+            c.F = 1
+        c.run, c.runv = self.run_after(c, d, stuffed)
+        return stuffed, d
+
     def shift_out(self, c):
         w = c.lanes
         c.SR = (c.SR << w) & MASK if c.msb else c.SR >> w
@@ -317,6 +383,7 @@ class Splice:
 
     def exec_slot(self, c):
         prev, c.last = c.last, list(self.s2)
+        eng_before = list(self.eng)  # the registered outputs, before this slot's side-set
         if c.halted:
             return
         if c.stall:
@@ -339,6 +406,34 @@ class Splice:
             self.drive(f["line"], f["v"])
         elif op == "MODE":
             self.src[f["line"]] = f["src"]
+        elif op in ("OUT", "OUTB") and self.coded_tx(c, op, f):
+            cur = eng_before[f["line"]] if f["line"] < 12 else 0
+            self.cover("CODE.man" if c.cd_man else "CODE.stuff.tx" if self.stuff_due(c) else
+                       "CODE.nrzi.tx" if c.cd_nrzi else "CODE.data.tx")
+            if self.code_tx(c, f, cur):
+                next_pc = c.pc  # a stuff bit or a first half-bit: the same instruction again
+            else:
+                self.shift_out(c)
+                if op == "OUTB" and c.BC:
+                    next_pc = (c.pc - f["rel"]) & 0x1FF
+        elif op in ("IN", "INB") and self.coded_rx(c, op):
+            f_before = c.F
+            stuffed, d = self.code_rx(c, f)
+            self.cover("CODE.stuff.rx" if stuffed else "CODE.nrzi.rx" if c.cd_nrzi else "CODE.data.rx")
+            if stuffed and c.F and not f_before:
+                self.cover("CODE.stufferr")
+            if stuffed:
+                next_pc = c.pc
+            else:
+                c.lastb = d
+                self.shift_in(c, d)
+                if op == "INB" and c.BC:
+                    next_pc = (c.pc - f["rel"]) & 0x1FF
+        elif op == "CODE":
+            c.cd_nrzi, c.cd_kind, c.cd_n = f["nrzi"], f["kind"], f["n"]
+            c.cd_man, c.cd_pol, c.rxp, c.cd_diff = f["man"], f["pol"], f["lvl"], f["diff"]
+            c.cd_sync = f["sync"]
+            c.run = c.runv = c.half = 0
         elif op == "OUT":
             c.lastb = self.group_out(c)
             self.drive_group(c, f["line"], c.lastb)

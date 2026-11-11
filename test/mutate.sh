@@ -151,5 +151,17 @@ run "quad: low nibble first" $H "wire [7:0] byte_in = q ? {rx[3:0], nib_in}" "wi
 run "quad: output nibble lanes reversed" $H "{io_out, miso} <= tx[7:4];" "{miso, io_out} <= tx[7:4];"
 run "quad: AUX_OUT stays the engine's" $T "host_quad ? host_io : aux_q[2:0]" "aux_q[2:0]"
 run "quad: register 23 doesn't read back" $T "5'd23: reg_rdata = {7'd0, host_quad};" ""
+# CODE, the line coder (v2)
+run "code: a stuff bit doesn't repeat on transmit" $E "wire        rep      = (shop_tx && rep_tx_r) || (shop_rx && rep_rx_r);" "wire        rep      = (shop_rx && rep_rx_r);"
+run "code: a stuff bit is shifted in on receive" $E "wire        rep      = (shop_tx && rep_tx_r) || (shop_rx && rep_rx_r);" "wire        rep      = (shop_tx && rep_tx_r);"
+run "code: NRZI transmit toggles on 1" $E ": cd_nrzi[c] ? (tx_d ? tx_cur : !tx_cur) : tx_d;" ": cd_nrzi[c] ? (tx_d ? !tx_cur : tx_cur) : tx_d;"
+run "code: NRZI receive inverted" $E "? rx_raw == rxp[c] : rx_raw;" "? rx_raw != rxp[c] : rx_raw;"
+run "code: CAN stuff bit not complemented" $E "wire        stuff_bit = cd_kind[c] ? !runv[c] : 1'b0;" "wire        stuff_bit = cd_kind[c] ? runv[c] : 1'b0;"
+run "code: diff drives the same value" $E "eng_nx[ln_pair] = !tx_line;" "eng_nx[ln_pair] = tx_line;"
+run "code: Manchester halves equal" $E "wire        tx_line  = cd_man[c] ? (half[c] ? !man_first : man_first)" "wire        tx_line  = cd_man[c] ? man_first"
+run "code: sync re-phases a whole period" $E "tcnt[i] <= resync[i] ? {2'd0, tp[i][15:1]}" "tcnt[i] <= resync[i] ? {1'b0, tp[i]}"
+run "code: stuff error not flagged" $E "if (rx_stuff_err) f[c] <= 1'b1;" ";"
+run "code: CRC sees stuff bits" $E "if ((is_out || is_outb) && !rep) lastb[c] <= grp_out;" "if (is_out || is_outb) lastb[c] <= grp_out;"
+run "code: run never saturates" $E "wire [2:0]  run_inc  = run[c] == 3'd7 ? 3'd7 : run[c] + 3'd1;" "wire [2:0]  run_inc  = run[c] + 3'd1;"
 rm -rf sim_build results.xml
 echo done | tee -a "$OUT"

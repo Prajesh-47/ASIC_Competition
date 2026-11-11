@@ -23,6 +23,8 @@ TABLE = {
     "WAIT": ("101110", (("line", 4), ("c", 2), ("stamp", 1))),
     "ADD": ("101111", (("r", 2), ("v", 8))),
     "CMPI": ("110000", (("a", 2), ("v", 8))),
+    # v2 line coder (docs/architecture.md section 5.4): NRZI, bit stuffing and Manchester
+    "CODE": ("110001", (("nrzi", 1), ("lvl", 1), ("kind", 1), ("n", 3), ("man", 1), ("pol", 1), ("diff", 1), ("sync", 1))),
     "AND": ("11001101", (("d", 2), ("s", 3))),
     "BCI": ("11001110", (("n", 5),)),
     "CAPMARK": ("11001111", ()),
