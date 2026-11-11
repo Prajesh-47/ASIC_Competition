@@ -32,8 +32,10 @@
   "GRT_DESIGN_REPAIR_MAX_CAP_PCT": 50,
   "DESIGN_REPAIR_MAX_SLEW_PCT": 30,
   "DESIGN_REPAIR_MAX_CAP_PCT": 30,
-  "//": "8x4 (exp/tiles-8x4, gds 42822067418) left one slew violation: cap_sram/A_WEN, 0.80 ns vs a 0.595",
-  "//": "limit, driven by an o21ai_1 over a 153 um Metal3 route. Buffer wires over 120 um instead of 200.",
+  "//": "Keep 200 um for v2. 120 um fixed one 8x4 slew violation (cap_sram/A_WEN, gds 42822067418) but on v2's",
+  "//": "larger logic it put 12.35 ns of buffers on the fetch path: slack -1.29 ns (gds 42857095381). 200 um",
+  "//": "closes at +0.34 ns, slew 0 (42880460714). No limit (42880460945) misses setup, with slew and cap",
+  "//": "violations; 120 um at 75% density (42880460772) has routing DRC and LVS errors.",
   "GRT_DESIGN_REPAIR_MAX_WIRE_LENGTH": 200,
   "DESIGN_REPAIR_MAX_WIRE_LENGTH": 200,
 
