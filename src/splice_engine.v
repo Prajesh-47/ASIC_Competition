@@ -234,27 +234,33 @@ module splice_engine #(parameter NCTX = 4) (
   wire [1:0]  lw_c = lw[c];
   wire        msb_c = msb[c];
   // CODE at one lane. What repeats an instruction is worked out from registers alone, and the instruction
-  // only selects, as for the loops below: a stuff bit, or Manchester's first half-bit.
+  // only selects, as for the loops below: a stuff bit, or the first half-bit of Manchester or biphase.
+  // Manchester with NRZI set is biphase-mark (pol: biphase-space), both ways.
   wire        cd_any   = cd_nrzi[c] || cd_n[c] != 3'd0;
-  wire        cd_tx_on = lw[c] == 2'd0 && (cd_any || cd_man[c]);
-  wire        cd_rx_on = lw[c] == 2'd0 && cd_any && !cd_man[c];
+  wire        cd_on    = lw[c] == 2'd0 && (cd_any || cd_man[c]);
   wire        stuff_due = cd_n[c] != 3'd0 && run[c] == cd_n[c];
-  wire        rep_tx_r = cd_tx_on && (cd_man[c] ? !half[c] : stuff_due);
-  wire        rep_rx_r = cd_rx_on && stuff_due;
+  wire        rep_r    = cd_on && (cd_man[c] ? !half[c] : stuff_due);
   wire        shop_tx  = (is_out && !ins[6]) || is_outb;
   wire        shop_rx  = is_in || is_inb;
-  wire        code_tx  = cd_tx_on && shop_tx;
-  wire        code_rx  = cd_rx_on && shop_rx;
-  wire        rep      = (shop_tx && rep_tx_r) || (shop_rx && rep_rx_r);
+  wire        code_tx  = cd_on && shop_tx;
+  wire        code_rx  = cd_on && shop_rx;
+  wire        rep      = (shop_tx || shop_rx) && rep_r;
   wire        rx_raw   = lines[ln_a];
-  wire        rx_bit   = (cd_rx_on && cd_nrzi[c]) ? rx_raw == rxp[c] : rx_raw;   // NRZI: no change is a 1
+  wire        rx_same  = rx_raw == rxp[c];
+  // NRZI: no change is a 1. Manchester: the second half (IEEE) or the first (pol). Biphase: a change mid-bit
+  wire        rx_bit   = !cd_on ? rx_raw
+                       : cd_man[c] ? (cd_nrzi[c] ? rx_same == cd_pol[c] : (cd_pol[c] ? rxp[c] : rx_raw))
+                       : cd_nrzi[c] ? rx_same : rx_raw;
   wire        stuff_bit = cd_kind[c] ? !runv[c] : 1'b0;
-  wire        rx_stuff_err = code_rx && stuff_due && rx_bit != stuff_bit;
+  // A wrong stuff bit, Manchester's halves equal, or biphase without the change at a bit's start
+  wire        rx_code_err = code_rx && (cd_man[c] ? rx_same && (cd_nrzi[c] ? !half[c] : half[c])
+                                                  : stuff_due && rx_bit != stuff_bit);
   wire        tx_b     = msb[c] ? sr[c][15] : sr[c][0];
   wire        tx_d     = stuff_due ? stuff_bit : tx_b;
   wire        tx_cur   = ln_a < 4'd12 ? eng[ln_a] : 1'b0;
   wire        man_first = cd_pol[c] ? tx_b : !tx_b;
-  wire        tx_line  = cd_man[c] ? (half[c] ? !man_first : man_first)
+  wire        tx_line  = cd_man[c] ? (cd_nrzi[c] ? (half[c] ? tx_cur ^ tx_b ^ cd_pol[c] : !tx_cur)
+                                                 : (half[c] ? !man_first : man_first))
                        : cd_nrzi[c] ? (tx_d ? tx_cur : !tx_cur) : tx_d;
   wire [3:0]  ln_pair  = ln_a ^ 4'd1;
   // The run after a data or stuff bit d
@@ -642,13 +648,13 @@ module splice_engine #(parameter NCTX = 4) (
                 runv[c] <= 1'b0;
                 half[c] <= 1'b0;
               end
-              if (code_tx && cd_man[c]) half[c] <= !half[c];
-              if ((code_tx && !cd_man[c]) || code_rx) begin
+              if ((code_tx || code_rx) && cd_man[c]) half[c] <= !half[c];
+              if ((code_tx || code_rx) && !cd_man[c]) begin
                 run[c] <= run_nx;
                 runv[c] <= runv_nx;
               end
               if (code_rx) rxp[c] <= rx_raw;
-              if (rx_stuff_err) f[c] <= 1'b1;
+              if (rx_code_err) f[c] <= 1'b1;
               if (is_lanes) lw[c] <= ins[7:6];
               if (is_ldp) begin
                 ldp_pend[c] <= 1'b1;

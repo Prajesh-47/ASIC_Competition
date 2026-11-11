@@ -159,7 +159,7 @@ def _translate(mnemonic, args, flags, named, names, labels, pc, final):
     if op in ("CRC", "CRCW"):  # crc r, msb[, lane]: the bit last shifted. crcw r, msb, lane: a word of SR
         lane = num(args[2]) if len(args) > 2 else 0
         return [("CRC", {"r": reg(args[0]), "dir": key(CRCDIR, args[1]), "word": int(op == "CRCW"), "lane": lane})]
-    if op == "CODE":  # code off | code nrzi, ones 6, diff, lvl 1 | code equal 5 | code man [thomas]
+    if op == "CODE":  # code off | code nrzi, ones 6, diff, lvl 1 | code equal 5 | code man [thomas] | code bmc [space]
         f = {"nrzi": 0, "lvl": 0, "kind": 0, "n": 0, "man": 0, "pol": 0, "diff": 0, "sync": 0}
         for arg in args:
             words = arg.split()
@@ -180,10 +180,14 @@ def _translate(mnemonic, args, flags, named, names, labels, pc, final):
                 f["lvl"] = num(words[1])
             elif name == "MAN":
                 f["man"], f["pol"] = 1, int(len(words) > 1 and words[1].upper() == "THOMAS")
+            elif name == "BMC":  # biphase: a change at every bit's start, and one mid-bit for a 1 (or 0: space)
+                f["man"], f["nrzi"], f["pol"] = 1, 1, int(len(words) > 1 and words[1].upper() == "SPACE")
             else:
                 raise AsmError(f"code: unknown option {arg}")
-        if f["man"] and (f["nrzi"] or f["n"]):
-            raise AsmError("Manchester doesn't combine with NRZI or stuffing")
+        if f["man"] and f["n"]:
+            raise AsmError("Manchester and biphase don't combine with stuffing")
+        if f["man"] and f["nrzi"] and not any(a.split()[0].upper() == "BMC" for a in args):
+            raise AsmError("Manchester doesn't combine with NRZI: biphase is code bmc")
         return [(op, f)]
     if op == "LANES":
         width = num(args[0])

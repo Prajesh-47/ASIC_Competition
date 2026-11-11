@@ -890,6 +890,16 @@ def random_program(rng, length, ctx1):
     # Lines 12-15 read 1, so under "ones 1" the second IN finds a 1 where the stuff bit should be 0
     words += [encode("CODE", kind=0, n=1), encode("IN", line=12, tick=0, side=0, dly=0),
               encode("IN", line=12, tick=0, side=0, dly=0)]
+    # Manchester and biphase receive, both halves, and biphase transmit. With F cleared first, two Manchester
+    # samples of line 12, which reads 1, are equal halves and break the code
+    words += [encode("LDI", r=0, hl=0, v=0), encode("SHR", r=0),
+              encode("CODE", man=1, pol=rng.randrange(2)), encode("IN", line=12, tick=0, side=0, dly=0),
+              encode("IN", line=12, tick=0, side=0, dly=0),
+              encode("CODE", nrzi=1, man=1, lvl=rng.randrange(2), pol=rng.randrange(2), diff=rng.randrange(2)),
+              encode("OUT", line=line, ns=0, tick=0, side=0, dly=0),
+              encode("OUT", line=line, ns=0, tick=0, side=0, dly=0),
+              encode("IN", line=rng.randrange(12), tick=0, side=0, dly=0),
+              encode("IN", line=rng.randrange(12), tick=0, side=0, dly=0)]
     # A taken JMP F: shifting out a 1 sets F, and the jump goes to the next word. A thin bin otherwise
     words += [encode("LDI", r=0, hl=0, v=1), encode("SHR", r=0)]
     words.append(encode("JMP", c=COND["F"], to=len(words) + 1))
@@ -1022,7 +1032,7 @@ async def differential_once(dut, seed, cycles, two):
     or to the links between contexts."""
     rng = random.Random(seed)
     nctx = two if not isinstance(two, bool) else (2 if two else 1)
-    length = {1: 64, 2: 96, 3: 128}.get(nctx, 160)  # every context's start well past random_program's prologue
+    length = {1: 80, 2: 112, 3: 160}.get(nctx, 200)  # every context's start well past random_program's prologue
     starts = [length * k // nctx for k in range(1, nctx)] + [0] * (3 - (nctx - 1))
     words = random_program(rng, length, starts[:nctx - 1] if nctx > 1 else -1)
     odrain, fast = rng.getrandbits(8), rng.getrandbits(8)
@@ -1184,9 +1194,11 @@ async def test_differential_covered_every_instruction(dut):
     bins += [f"{op}.t" for op, (_, fields) in TABLE.items() if any(name == "tick" for name, _ in fields)]
     # LANES: every shift at every width, and CRCW at every width
     bins += [f"{op}.w{w}" for op in ("OUT", "IN", "OUTB", "INB", "CRCW") for w in (1, 2, 4, 8)]
-    # CODE: every coded path, a stuff error on receive, and a clock-recovery re-phase
+    # CODE: every coded path, a stuff error on receive, and a clock-recovery re-phase. Manchester and biphase
+    # receive at each half, and a broken pair
     bins += ["CODE.man", "CODE.stuff.tx", "CODE.nrzi.tx", "CODE.data.tx", "CODE.stuff.rx", "CODE.nrzi.rx",
              "CODE.data.rx", "CODE.stufferr", "CODE.sync"]
+    bins += ["CODE.bmc", "CODE.man.rx.h1", "CODE.man.rx.h2", "CODE.bmc.rx.h1", "CODE.bmc.rx.h2", "CODE.codeerr"]
     missing = sorted(b for b in bins if b not in COVERAGE)
     dut._log.info(f"coverage: {len(bins) - len(missing)}/{len(bins)} bins, {sum(COVERAGE.values())} events")
     if GATE_LEVEL:  # far fewer runs at gate level, so this is only reported

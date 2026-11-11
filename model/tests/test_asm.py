@@ -183,3 +183,16 @@ if __name__ == "__main__":
         fn()
         print("PASS", fn.__name__)
     print(f"{len(tests)}/{len(tests)} passed")
+
+
+def test_code_biphase():
+    """explore/isa-code-rx: biphase is Manchester with NRZI set, and space is the polarity bit."""
+    f = decode(assemble("code bmc, sync").words[0])[1]
+    assert (f["man"], f["nrzi"], f["pol"], f["sync"]) == (1, 1, 0, 1)
+    assert decode(assemble("code bmc space").words[0])[1]["pol"] == 1
+    for bad in ("code man, nrzi", "code bmc, ones 5"):
+        try:
+            assemble(bad)
+        except Exception:
+            continue
+        raise AssertionError(bad)
