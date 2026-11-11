@@ -36,8 +36,9 @@
   "//": "larger logic it put 12.35 ns of buffers on the fetch path: slack -1.29 ns (gds 42857095381). 200 um",
   "//": "closes at +0.34 ns, slew 0 (42880460714). No limit (42880460945) misses setup, with slew and cap",
   "//": "violations; 120 um at 75% density (42880460772) has routing DRC and LVS errors.",
-  "GRT_DESIGN_REPAIR_MAX_WIRE_LENGTH": 200,
-  "DESIGN_REPAIR_MAX_WIRE_LENGTH": 200,
+  "//": "Experiment: 300 um, between 200 (closes) and no limit (misses setup).",
+  "GRT_DESIGN_REPAIR_MAX_WIRE_LENGTH": 300,
+  "DESIGN_REPAIR_MAX_WIRE_LENGTH": 300,
 
   "//": "Cap clock leaf clusters at 7 flops. Without a size, CTS groups sinks by buffer capacitance only,",
   "//": "and leaves drove 10-17 flops against the buffer's fanout limit of 8: all 76 max-fanout violations",
