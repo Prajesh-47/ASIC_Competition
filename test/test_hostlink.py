@@ -27,6 +27,8 @@ class Spi:
         await ClockCycles(self.dut.clk, host.HALF)
 
     async def byte(self, out):
+        if host.QUAD:
+            return await host.quad_byte(self.dut, out, self.ui)
         value = 0
         for k in range(7, -1, -1):
             bit = (out >> k) & 1

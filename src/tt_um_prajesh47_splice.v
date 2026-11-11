@@ -9,6 +9,7 @@
  *   ui[7:4] AUX_IN[3:0]
  *   uo[0] SPI MISO  uo[1] IRQ        uo[2] TRIG_OUT   uo[3] ACTIVE/heartbeat
  *   uo[7:4] AUX_OUT[3:0]
+ *   Quad host mode (register 23 bit 0): AUX_IN[2:0] and AUX_OUT[2:0] carry host IO1-3 (splice_host.v)
  *   uio[3:0] lines L0-L3 (A side)    uio[7:4] lines L4-L7 (B side)
  */
 
@@ -52,6 +53,7 @@ module tt_um_prajesh47_splice (
   wire        host_push, host_pop, h2e_full, e2h_empty;
   wire [15:0] host_wdata, e2h_head;
   wire        spi_miso;
+  wire [2:0]  host_io;       // host IO1-3 in quad mode
 
   wire        running, irq, trig;
   wire        engine_cap_on, engine_cap_off, engine_cap_mark;
@@ -75,6 +77,9 @@ module tt_um_prajesh47_splice (
       .mosi_pin  (ui_in[1]),
       .cs_n_pin  (ui_in[2]),
       .miso      (spi_miso),
+      .quad      (host_quad),
+      .io_in     (ui_in[6:4]),
+      .io_out    (host_io),
       .start     (start),
       .stop      (stop),
       .status    (status),
@@ -108,6 +113,7 @@ module tt_um_prajesh47_splice (
   reg [1:0] nctx_m1;
   reg [8:0] ctx2_pc, ctx3_pc;
   reg [7:0] pull_sel, push_sel;
+  reg       host_quad;     // register 23: quad host mode
   reg [7:0] odrain, fast, holdoff;
   reg [8:0] ctx1_pc;
   reg [15:0] cap_watch, cap_prescale;
@@ -124,6 +130,7 @@ module tt_um_prajesh47_splice (
       ctx3_pc <= 9'd0;
       pull_sel <= 8'd0;
       push_sel <= 8'd0;
+      host_quad <= 1'b0;
       odrain <= 8'd0;
       fast <= 8'd0;
       holdoff <= 8'd64;
@@ -153,6 +160,7 @@ module tt_um_prajesh47_splice (
         5'd19: ctx3_pc[7:0] <= reg_wdata;
         5'd20: pull_sel <= reg_wdata;
         5'd21: push_sel <= reg_wdata;
+        5'd23: host_quad <= reg_wdata[0];
         default: ;
       endcase
     end
@@ -181,6 +189,7 @@ module tt_um_prajesh47_splice (
       5'd20: reg_rdata = pull_sel;
       5'd21: reg_rdata = push_sel;
       5'd22: reg_rdata = {l1_full, l1_empty, l0_full, l0_empty, halted_all};
+      5'd23: reg_rdata = {7'd0, host_quad};
       default: reg_rdata = 8'd0;
     endcase
   end
@@ -390,7 +399,8 @@ module tt_um_prajesh47_splice (
   reg [3:0] aux_q;
   always @(posedge clk) aux_q <= engine_rst ? 4'd0 : eng_nx[11:8];
 
-  assign uo_out = {aux_q, running, trig, irq, spi_miso};
+  // In quad host mode AUX_OUT[2:0] are host IO1-3; AUX_OUT3 stays the engine's
+  assign uo_out = {aux_q[3], host_quad ? host_io : aux_q[2:0], running, trig, irq, spi_miso};
 
   wire _unused = &{ena, ui_in[3], 1'b0};
 

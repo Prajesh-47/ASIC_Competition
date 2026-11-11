@@ -67,6 +67,54 @@ def test_bitbang_is_mode_0_msb_first():
     assert t.cs_n.level == 1 and t.sck.level == 0 and t.rises_with_cs_high == 0
 
 
+class QuadTarget:
+    """Quad mode from the spec: IO0-3 sampled on rise, high nibble first, bit 3 on IO3; answers one byte late."""
+
+    def __init__(self):
+        self.sck = Target.Pin(self, "sck")
+        self.cs_n = Target.Pin(self, "cs_n", 1)
+        self.ins = [Target.Pin(self, f"in{k}") for k in range(4)]
+        self.outs = [Target.Pin(self, f"out{k}") for k in range(4)]
+        self.received, self.shift_in, self.count, self.out = [], 0, 0, 0
+        self.rises_with_cs_high = 0
+
+    def rise(self):
+        if self.cs_n.level:
+            self.rises_with_cs_high += 1
+            return
+        self.shift_in = (self.shift_in << 4 | sum(p.level << k for k, p in enumerate(self.ins))) & 0xFF
+        self.count += 1
+        if self.count % 2 == 0:
+            self.received.append(self.shift_in)
+            self.out = self.shift_in
+
+    def fall(self):
+        for k, p in enumerate(self.outs):
+            p.level = (self.out >> (4 + k)) & 1
+        self.out = self.out << 4 & 0xFF
+
+
+def test_quad_bitbang_nibble_order_and_edges():
+    t = QuadTarget()
+    data = bytes(random.Random(2).randrange(256) for _ in range(20))
+    got = splice_agent.quad_xfer(data, t.sck, t.cs_n, t.ins, t.outs)
+    assert bytes(t.received) == data
+    assert bytes(got)[1:] == data[:-1], "reads back one byte late, so IO was sampled on the wrong edge"
+    assert t.cs_n.level == 1 and t.rises_with_cs_high == 0
+
+
+def test_agent_quad_request_writes_register_23_then_switches():
+    sent = []
+    port = splice_agent.Port(lambda d: sent.append(("single", bytes(d))) or bytes(len(d)),
+                             lambda d: sent.append(("quad", bytes(d))) or bytes(len(d)))
+    assert splice_agent.handle("q 1", port.xfer, FakeBoard(), port) == "="
+    port.xfer(b"\x12\x00")
+    assert splice_agent.handle("q 0", port.xfer, FakeBoard(), port) == "="
+    port.xfer(b"\x12\x00")
+    assert sent == [("single", bytes([5, 23, 1])), ("quad", b"\x12\x00"), ("quad", bytes([5, 23, 0])),
+                    ("single", b"\x12\x00")]
+
+
 class FakeBoard:
     def __init__(self):
         self.calls = []

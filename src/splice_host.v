@@ -17,6 +17,12 @@
  * word for the first nw slots, if there is room, and pops the engine's word for the first level slots.
  * Later slots read as 0 without popping, so a word that arrives during the burst waits for the next one.
  * Memory is only reachable while the engine is stopped.
+ *
+ * Quad mode (host register 23 bit 0, v2): the same commands, with 4 bits each way on every SCK edge, so a
+ * byte takes 2 SCK periods instead of 8. In: IO0 MOSI, IO1-3 AUX_IN0-2. Out: IO0 MISO, IO1-3 AUX_OUT0-2.
+ * The high nibble goes first, its bit 3 on IO3. Inputs and outputs are separate pins, so it stays full
+ * duplex with no turnaround. It takes effect from the next CS low, and register 23 written as 0 (in quad)
+ * leaves it.
  */
 `default_nettype none
 
@@ -27,6 +33,9 @@ module splice_host (
     input  wire        mosi_pin,
     input  wire        cs_n_pin,
     output reg         miso,
+    input  wire        quad,        // 4 bits per SCK edge, see above
+    input  wire [2:0]  io_in,       // IO1-3 in quad mode
+    output reg  [2:0]  io_out,      // IO1-3 in quad mode
 
     output reg         start,
     output reg         stop,
@@ -58,10 +67,12 @@ module splice_host (
                    STATUS = 8'h12, FIFO_WR = 8'h20, FIFO_RD = 8'h21, XFER = 8'h22;
 
   reg [1:0] sck_s, mosi_s, cs_s;
+  reg [5:0] io_s;
   reg       sck_p;
   always @(posedge clk) begin
     sck_s <= {sck_s[0], sck_pin};
     mosi_s <= {mosi_s[0], mosi_pin};
+    io_s <= {io_s[2:0], io_in};
     cs_s <= {cs_s[0], cs_n_pin};
     sck_p <= sck_s[1];
   end
@@ -85,8 +96,11 @@ module splice_host (
   reg [7:0] xf_rd;     // XFER: words still to pop
   reg [7:0] xf_wr;     // XFER: words still to push
 
-  wire       byte_done = cs_active && sck_rise && bitn == 3'd7;
-  wire [7:0] byte_in = {rx, mosi_s[1]};
+  // Quad mode is sampled once per transaction, at CS low, so a register write can't switch it mid-byte
+  reg        q;
+  wire [3:0] nib_in = {io_s[5:3], mosi_s[1]};
+  wire       byte_done = cs_active && sck_rise && (q ? bitn == 3'd4 : bitn == 3'd7);
+  wire [7:0] byte_in = q ? {rx[3:0], nib_in} : {rx, mosi_s[1]};
   wire       is_mem = cmd == WR_PROG || cmd == RD_PROG || cmd == WR_CAP || cmd == RD_CAP;
   wire       is_rd_mem = cmd == RD_PROG || cmd == RD_CAP;
 
@@ -103,6 +117,8 @@ module splice_host (
 
     if (!rst_n) begin
       miso <= 1'b0;
+      io_out <= 3'd0;
+      q <= 1'b0;
       rx <= 0;
       bitn <= 0;
       tx <= 0;
@@ -129,6 +145,8 @@ module splice_host (
       word_lo <= 0;
       tx <= 0;
       miso <= 1'b0;
+      io_out <= 3'd0;
+      q <= quad;
     end else begin
       if (rd_capture) begin  // read data is ready: the high byte goes out next
         rd_word <= mem_rdata;
@@ -142,11 +160,16 @@ module splice_host (
           pop_next <= 1'b0;
         end
         rx <= byte_in[6:0];
-        bitn <= bitn + 3'd1;
+        bitn <= byte_done ? 3'd0 : bitn + (q ? 3'd4 : 3'd1);
       end
       if (sck_fall) begin
-        miso <= tx[7];
-        tx <= {tx[6:0], 1'b0};
+        if (q) begin
+          {io_out, miso} <= tx[7:4];
+          tx <= {tx[3:0], 4'd0};
+        end else begin
+          miso <= tx[7];
+          tx <= {tx[6:0], 1'b0};
+        end
       end
 
       if (byte_done) begin

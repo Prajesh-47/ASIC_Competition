@@ -41,6 +41,10 @@ class AgentLink:
     def select(self, project):
         self.request("s " + project)
 
+    def quad(self, on=True):
+        """Quad host mode (v2): about 4 times the link's bandwidth. SPLICE and the agent switch together."""
+        self.request(f"q {int(bool(on))}")
+
 
 def open_board(port, baud=115200, timeout=5.0):
     """Open the serial port, leave whatever is running, and start the agent."""

@@ -145,5 +145,11 @@ run "jmpr: jumps to the wrong operand" $E ": is_jmpr   ? opnd_cmp[8:0]" ": is_jm
 # Four contexts and links (explore/uarch-contexts, added to the script for v2)
 run "contexts: round robin wraps after context 2" $E "wire [CW-1:0] cur_nx = (cur == nctx_m1[CW-1:0] || cur == LAST)" "wire [CW-1:0] cur_nx = (cur == nctx_m1[CW-1:0] || cur == 2'd2)"
 run "links: link 1 never pops" $T ".pop(eng_pop && pull_from == 2'd2), .head(l1_head)" ".pop(1'b0), .head(l1_head)"
+# Quad host mode (v2)
+run "quad: IO1-3 ignored on input" $H "wire [3:0] nib_in = {io_s[5:3], mosi_s[1]};" "wire [3:0] nib_in = {3'd0, mosi_s[1]};"
+run "quad: low nibble first" $H "wire [7:0] byte_in = q ? {rx[3:0], nib_in}" "wire [7:0] byte_in = q ? {nib_in, rx[3:0]}"
+run "quad: output nibble lanes reversed" $H "{io_out, miso} <= tx[7:4];" "{miso, io_out} <= tx[7:4];"
+run "quad: AUX_OUT stays the engine's" $T "host_quad ? host_io : aux_q[2:0]" "aux_q[2:0]"
+run "quad: register 23 doesn't read back" $T "5'd23: reg_rdata = {7'd0, host_quad};" ""
 rm -rf sim_build results.xml
 echo done | tee -a "$OUT"

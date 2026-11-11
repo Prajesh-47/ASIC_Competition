@@ -34,9 +34,9 @@ pinout:
   ui[1]: "HOST_MOSI"
   ui[2]: "HOST_CS_N"
   ui[3]: "TRIG_IN"
-  ui[4]: "AUX_IN0"
-  ui[5]: "AUX_IN1"
-  ui[6]: "AUX_IN2"
+  ui[4]: "AUX_IN0 / QIO1_IN"
+  ui[5]: "AUX_IN1 / QIO2_IN"
+  ui[6]: "AUX_IN2 / QIO3_IN"
   ui[7]: "AUX_IN3"
 
   # Outputs
@@ -44,9 +44,9 @@ pinout:
   uo[1]: "IRQ"
   uo[2]: "TRIG_OUT"
   uo[3]: "ACTIVE"
-  uo[4]: "AUX_OUT0"
-  uo[5]: "AUX_OUT1"
-  uo[6]: "AUX_OUT2"
+  uo[4]: "AUX_OUT0 / QIO1_OUT"
+  uo[5]: "AUX_OUT1 / QIO2_OUT"
+  uo[6]: "AUX_OUT2 / QIO3_OUT"
   uo[7]: "AUX_OUT3"
 
   # Bidirectional pins

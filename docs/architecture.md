@@ -55,12 +55,12 @@ From their update email: there is no fixed weighting, and **flexibility is the m
 | `ui[1]` | Host SPI MOSI |
 | `ui[2]` | Host SPI CS_n |
 | `ui[3]` | TRIG_IN (external trigger → engine / capture) |
-| `ui[7:4]` | AUX_IN[3:0] — engine-readable inputs (lines L8–L11) |
+| `ui[7:4]` | AUX_IN[3:0] — engine-readable inputs (lines L8–L11). In quad host mode AUX_IN[2:0] are host IO1–3 |
 | `uo[0]` | Host SPI MISO |
 | `uo[1]` | IRQ (engine/host event) |
 | `uo[2]` | TRIG_OUT (fires on match / injection — scope trigger) |
 | `uo[3]` | ACTIVE / heartbeat |
-| `uo[7:4]` | AUX_OUT[3:0] — engine-drivable push-pull outputs (e.g. extra SPI CS in emulate mode) |
+| `uo[7:4]` | AUX_OUT[3:0] — engine-drivable push-pull outputs (e.g. extra SPI CS in emulate mode). In quad host mode AUX_OUT[2:0] are host IO1–3 |
 | `uio[3:0]` | Lines L0–L3 = **A side** of pairs 0–3 |
 | `uio[7:4]` | Lines L4–L7 = **B side** of pairs 0–3 (partner of Lx is Lx^4) |
 
@@ -309,9 +309,11 @@ SCK is at most core/8, oversampled with 2-flop synchronizers, so the whole chip 
 | `0x20` / `0x21` | Write / read FIFO | words | Writing a full FIFO drops the word. Reading an empty FIFO returns 0. A word leaves the FIFO when the host starts clocking it, so ending a read after N words consumes exactly N |
 | `0x22` | Exchange (`XFER`) | `nw`, pad, then word slots | Full duplex. During `nw` and the pad, SPLICE sends the level and free space, both taken when the command byte ends. Each slot then pushes the host's word for the first `nw` slots, if there's room, and pops a word for the first `level` slots. Later slots read as 0 without popping, so a stored 0 is data and a word that arrives during the burst waits for the next XFER. Ending inside a slot pushes nothing and, as with `0x21`, spends that slot's engine word |
 
+**Quad mode (v2, register 23 bit 0):** every command above, with 4 bits each way on every SCK edge, so a byte takes 2 SCK periods instead of 8. IO0 is MOSI in and MISO out; IO1-3 are AUX_IN0-2 in and AUX_OUT0-2 out. The high nibble goes first, its bit 3 on IO3. Inputs and outputs are separate pins, so it stays full duplex with no turnaround, and the same core/8 SCK limit applies. It takes effect from the next CS low; writing register 23 as 0 in quad mode leaves it. While it's on, AUX_OUT0-2 belong to the host and AUX_OUT3 stays the engine's; firmware can still read AUX_IN0-2, but they carry host data. The board agent's `q 1` request switches SPLICE and itself together (`AgentLink.quad()`).
+
 Each FIFO holds 8 words (`SPLICE_FIFO_LOG2`, a build define; tests read the depth from STATUS after reset). With XFER, full-duplex HDLC at 1 Mbit/s each way keeps up down to SCK = core/20 with 8 words, against core/8 for the STATUS, write, read loop at any depth (`test/test_hostlink.py`).
 
-Registers: 0 mode (bit 0: two contexts), 1 open-drain lines, 2 fast pass-through lines, 3 bridge holdoff, 4 and 5 context 1's start address, 6 and 7 capture's 4 watched lines, 8 and 9 capture prescaler, 10 capture control (write bits 2:0 mode, bit 7 start, bit 6 stop; read `{active, wrapped, triggered, 0, 0, mode}`), 11 and 12 entries kept after a trigger, 13 and 14 capture write pointer (read only). **`STEP` isn't built yet.**
+Registers: 0 contexts less one (bits 1:0), 1 open-drain lines, 2 fast pass-through lines, 3 bridge holdoff, 4 and 5 context 1's start address, 6 and 7 capture's 4 watched lines, 8 and 9 capture prescaler, 10 capture control (write bits 2:0 mode, bit 7 start, bit 6 stop; read `{active, wrapped, triggered, 0, 0, mode}`), 11 and 12 entries kept after a trigger, 13 and 14 capture write pointer (read only), 16-19 contexts 2 and 3's start addresses, 20 and 21 each context's PULL and PUSH routing, 22 link and halted flags (read only), 23 quad host mode. **`STEP` isn't built yet.**
 
 Host software (Python): assembler, loader, CLI (`python3 -m splice_host`: setup, load, run, stop, status, reg, push, pop, capture), VCD export for PulseView. The library runs against RTL sim (cocotb) and, through a small MicroPython agent on the ETR demo board's RP2350, the real board. The agent's SPI is bit-banged because `ui[2:0]` and `uo[0]` aren't on a hardware SPI pin set. It is checked against RTL by replaying its pin activity, and hasn't run on a board.
 

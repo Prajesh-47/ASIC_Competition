@@ -124,3 +124,15 @@ async def measure_sd_xfer_in_spec(dut):
 async def measure_sd_xfer_out_of_spec(dut):
     await reset(dut)
     await sweep(dut, OUT_OF_SPEC, False)
+
+
+@cocotb.test()
+async def measure_sd_xfer_quad(dut):
+    """The same transfers with the host link in quad mode (v2), at the fastest in-spec SCK and one slower."""
+    from test_quad import enter_quad, leave_quad
+    await reset(dut)
+    await enter_quad(dut)
+    try:
+        await sweep(dut, [4, 8], True)
+    finally:
+        await leave_quad(dut)

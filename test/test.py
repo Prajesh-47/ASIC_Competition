@@ -32,12 +32,42 @@ def firmware(name, **defines):
         return assemble(source.read(), defines)
 
 
+QUAD = False  # host register 23: 4 bits each way per SCK edge, on IO0 = MOSI/MISO and IO1-3 = AUX 0-2
+
+
+def quad_ui(ui_high, nib):
+    """ui_in for one quad nibble: IO0 on ui[1], IO1-3 on ui[4..6], ui[7] and CS from ui_high."""
+    return (ui_high & 0x80) | ((nib >> 1) & 7) << 4 | (nib & 1) << 1
+
+
+def quad_uo(dut):
+    value = str(dut.uo_out.value)
+    assert all(c in "01" for c in value), f"quad read sees uo_out={value}"
+    uo = int(value, 2)
+    return ((uo >> 4) & 7) << 1 | (uo & 1)
+
+
+async def quad_byte(dut, byte, ui_high):
+    value = 0
+    for nib in (byte >> 4, byte & 15):
+        dut.ui_in.value = quad_ui(ui_high, nib)
+        await ClockCycles(dut.clk, HALF)
+        value = value << 4 | quad_uo(dut)
+        dut.ui_in.value = quad_ui(ui_high, nib) | 1
+        await ClockCycles(dut.clk, HALF)
+    dut.ui_in.value = quad_ui(ui_high, byte & 15)
+    return value
+
+
 async def spi_xfer(dut, data, ui_high=0xF0):
-    """One SPI transaction, mode 0, MSB first. Returns the bytes clocked back."""
+    """One SPI transaction, mode 0, MSB first. Returns the bytes clocked back. Quad when QUAD is set."""
     out = []
     dut.ui_in.value = ui_high  # CS low
     await ClockCycles(dut.clk, HALF)
     for byte in data:
+        if QUAD:
+            out.append(await quad_byte(dut, byte, ui_high))
+            continue
         value = 0
         for k in range(7, -1, -1):
             bit = (byte >> k) & 1
