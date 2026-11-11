@@ -31,8 +31,9 @@ def on_layer(box):
 
 def supply_columns(inst, pin_names):
     """Die-frame (x0, x1) of each Metal4 column on the given macro pins."""
-    if inst.getOrient() != "R0":
-        raise click.ClickException(f"{inst.getName()}: only R0 is supported")
+    # MX mirrors the macro about its horizontal axis, which leaves x unchanged.
+    if inst.getOrient() not in ("R0", "MX"):
+        raise click.ClickException(f"{inst.getName()}: only R0 and MX are supported")
     origin = inst.getBBox().xMin()
     columns = set()
     for name in pin_names:

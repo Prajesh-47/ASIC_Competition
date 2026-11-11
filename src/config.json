@@ -63,6 +63,8 @@
   "//": "SRAM macros, see macro/README.md. Metal4 is the only PDN layer available to the project,",
   "//": "so the macro cannot be strapped from above: Splice.PowerColumns turns the macro's supply",
   "//": "columns into stripes instead. Macro spacing is set by the floorplan rule in macro/README.md.",
+  "//": "Experiment: mirror both macros (MX) so their pins, all on one long edge, face the core above",
+  "//": "instead of the 37.8 um strip under them. R0 routes every DOUT and ADDR around a 191 um tall macro.",
   "meta": {
     "flow": "Classic",
     "substituting_steps": {
@@ -73,8 +75,8 @@
   "MACROS": {
     "RM_IHPSG13_1P_512x16_c2_bm_bist": {
       "instances": {
-        "prog_sram": { "location": [377.76, 37.8], "orientation": "R0" },
-        "cap_sram": { "location": [678.24, 37.8], "orientation": "R0" }
+        "prog_sram": { "location": [377.76, 37.8], "orientation": "MX" },
+        "cap_sram": { "location": [678.24, 37.8], "orientation": "MX" }
       },
       "gds": ["dir::../macro/RM_IHPSG13_1P_512x16_c2_bm_bist/RM_IHPSG13_1P_512x16_c2_bm_bist.gds"],
       "lef": ["dir::../macro/RM_IHPSG13_1P_512x16_c2_bm_bist/RM_IHPSG13_1P_512x16_c2_bm_bist.lef"],
