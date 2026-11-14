@@ -790,6 +790,84 @@ async def test_usb_ls_receive_line_coder(dut):
     await write_reg(dut, 0, 0)
 
 
+# ------------------------------------------------------------------ Manchester and biphase receive (explore/isa-code-rx)
+def manchester_phases(bits):
+    """DALI's coding: a start bit, then each bit as two halves, a 1 low then high (IEEE)."""
+    out = []
+    for b in [1] + bits:
+        out += [0, 1] if b else [1, 0]
+    return out
+
+
+async def manchester_gear(dut, frame_phases, te, sent_te, nctx):
+    """dali_gear_code.s at a short half bit, on open-drain line 4. Returns FIFO words and the bus history."""
+    await stop(dut)
+    await load_beside_idle(dut, firmware("dali_gear_code.s", TE=te).words, nctx)
+    await write_reg(dut, 1, 0x10)
+    await start(dut)
+    t0, history, ext = 100, [], 1
+
+    def bus(t, out, oe):
+        k = (t - t0) // sent_te
+        drive = frame_phases[k] if 0 <= k < len(frame_phases) else 1
+        level_ = level(out, oe, 4) & drive
+        if not history or history[-1][1] != level_:
+            history.append((t, level_))
+        return 0xEF | level_ << 4
+
+    await capture(dut, t0 + (len(frame_phases) + 34) * sent_te, bus)
+    words = []
+    while not (await spi_xfer(dut, [0x12, 0]))[1] & 0x10:
+        words.extend(await fifo_read(dut, 1))
+    await stop(dut)
+    await write_reg(dut, 0, 0)
+    await write_reg(dut, 1, 0)
+    return words, history, t0 + len(frame_phases) * sent_te
+
+
+@cocotb.test()
+async def test_manchester_receive_line_coder(dut):
+    """CODE man on receive: DALI's forward frame decoded with clock recovery at a 60-cycle half bit, with the
+    sender 10% slow and fast, alone and in one of four contexts, then answered. A frame missing an edge
+    in its middle breaks the code, and is reported as malformed."""
+    await reset(dut)
+    te = 60
+    byte = lambda v: [(v >> k) & 1 for k in range(7, -1, -1)]
+    frame = (5 << 1 | 1) << 8 | 0x91  # QUERY to short address 5
+    for nctx, sent_te in ((1, te), (1, round(te * 1.1)), (1, round(te * 0.9)), (4, te), (4, round(te * 1.1))):
+        phases = manchester_phases(byte(frame >> 8) + byte(frame & 0xFF))
+        words, history, ended = await manchester_gear(dut, phases, te, sent_te, nctx)
+        assert words == [frame, 0x0100], f"{nctx} contexts, half bit {sent_te}: {[hex(w) for w in words]}"
+        falls = [t for (t, v), (_, w) in zip(history[1:], history) if t > ended and w == 1 and v == 0]
+        assert falls, "no reply"
+        sample = lambda t: [v for when, v in history if when <= t][-1]
+        reply = [sample(round(falls[0] + te * (k + 0.5))) for k in range(18)]
+        assert reply == manchester_phases(byte(0xFF)), f"reply {reply}"
+    phases = manchester_phases(byte(frame >> 8) + byte(frame & 0xFF))
+    phases[11] = phases[10]  # bit 5's halves equal: no edge in its middle
+    words, _, _ = await manchester_gear(dut, phases, te, te, 1)
+    assert words == [0x0300], [hex(w) for w in words]
+
+
+@cocotb.test()
+async def test_biphase_receive_line_coder(dut):
+    """CODE bmc on receive: S/PDIF at 48 kHz, decoded in hardware, with the period measured from the stream,
+    in either polarity and with the sender 3% fast."""
+    import test_trial as tt
+    await reset(dut)
+    for invert, rate in ((False, 1.0), (True, 1.0), (False, 1.03)):
+        sent = tt.spdif_stream(24)
+        await tt.spdif_rx_start(dut, "spdif_rx_code.s")
+        words, trace = await tt.spdif_receive(dut, tt.spdif_wave(tt.spdif_states(sent, invert=invert), rate), rate=rate)
+        await stop(dut)
+        got = tt.spdif_decode_code(words)
+        skip = tt.spdif_locked_tail(got, sent)
+        assert skip is not None, f"inverted {invert}, rate {rate}: never lined up"
+        n = min(len(got), len(sent) - skip)
+        assert n >= 16 and got[:n] == sent[skip:skip + n], f"inverted {invert}, rate {rate}"
+        assert not any((t[0] >> 6) & 1 for t in trace[3000:-800]), "PERR on a clean stream"
+
+
 @cocotb.test()
 async def test_two_protocols_at_once(dut):
     """UART receive and SPI controller from one program, both running, each judged by its own device model."""

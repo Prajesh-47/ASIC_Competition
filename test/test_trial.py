@@ -119,8 +119,8 @@ async def dali_start(dut, program, **defines):
 
 
 # The trial firmware, and versions using the 16-bit timer, added after the trial. Both must pass.
-DALI_CONTROLLERS = ("trial/dali_controller.s", "dali_controller.s")
-DALI_GEARS = ("trial/dali_gear.s", "dali_gear.s")
+DALI_CONTROLLERS = ("trial/dali_controller.s", "dali_controller.s", "dali_controller_code.s")
+DALI_GEARS = ("trial/dali_gear.s", "dali_gear.s", "dali_gear_code.s")
 
 
 async def controller_exchange(dut, frame, reply_bits=None, te=TE, gap=7, program="trial/dali_controller.s"):
@@ -150,7 +150,7 @@ async def test_dali_forward_frame_and_yes(dut):
         changes = [t for t, _ in bus.history if first <= t <= first + 38 * TE]
         assert changes[-1] <= end_of_data + 8, f"{program}: bus should idle through the two stop bits"
         assert abs(wanted.count(0) + wanted.count(1) - 34) == 0
-        if program == "dali_controller.s":  # one tick per half bit: every edge exactly on a whole Te
+        if program != "trial/dali_controller.s":  # one tick per half bit: every edge exactly on a whole Te
             assert all((t - first) % TE == 0 for t in changes), f"edges off the Te grid: {[(t - first) % TE for t in changes]}"
         await wait_cycles(30 * TE)
         assert await fifo_all(dut) == [0x01FF], program
@@ -588,6 +588,21 @@ def spdif_decode_words(words):
     return out
 
 
+def spdif_decode_code(words):
+    """spdif_rx_code.s: preamble states 4-7 then slots 4-15, then slots 16-31, decoded, MSB first."""
+    names = {0b0010: "M", 0b1101: "M", 0b0100: "W", 0b1011: "W", 0b1000: "B", 0b0111: "B"}
+    out = []
+    for i in range(0, len(words) - 1, 2):
+        first, second = words[i], words[i + 1]
+        bits = [(first >> k) & 1 for k in range(11, -1, -1)] + [(second >> k) & 1 for k in range(15, -1, -1)]
+        out.append((names.get(first >> 12, "?"), bits))
+    return out
+
+
+# The trial firmware, and the version with the line coder's biphase-mark decoding (explore/isa-code-rx)
+SPDIF_RX = {"trial/spdif_rx.s": spdif_decode_words, "spdif_rx_code.s": spdif_decode_code}
+
+
 async def spdif_receive(dut, wave, half=4, rate=1.0):
     """Plays a stream into RX with a host at the fastest SPI allowed. Returns words and the trace.
     Pairs come every 520 cycles, and reading one takes 320. So after the first pair the host reads on a timer,
@@ -622,14 +637,14 @@ async def spdif_receive(dut, wave, half=4, rate=1.0):
     return words, trace
 
 
-async def spdif_rx_start(dut):
+async def spdif_rx_start(dut, program="trial/spdif_rx.s"):
     await stop(dut)
-    await load_program(dut, firmware("trial/spdif_rx.s").words)
+    await load_program(dut, firmware(program).words)
     await start(dut)
 
 
-async def spdif_rx_run(dut, subframes, rate=1.0, invert=False):
-    await spdif_rx_start(dut)
+async def spdif_rx_run(dut, subframes, rate=1.0, invert=False, program="trial/spdif_rx.s"):
+    await spdif_rx_start(dut, program)
     wave = spdif_wave(spdif_states(subframes, invert=invert), rate)
     words, trace = await spdif_receive(dut, wave, rate=rate)
     await stop(dut)
@@ -650,86 +665,94 @@ def spdif_locked_tail(decoded, sent):
 async def test_spdif_receive_decodes_two_frames_worth(dut):
     """Decode of every field, including at the block start."""
     await reset(dut)
-    sent = spdif_stream(24)
-    words, _ = await spdif_rx_run(dut, sent)
-    got = spdif_decode_words(words)
-    skip = spdif_locked_tail(got, sent)
-    assert skip is not None, f"never lined up: {got[:2]}"
-    n = min(len(got), len(sent) - skip)
-    assert n >= 16, f"only {n} subframes"
-    assert got[:n] == sent[skip:skip + n], f"{sum(a != b for a, b in zip(got, sent[skip:]))} subframes wrong of {n}"
+    for program, decode in SPDIF_RX.items():
+        sent = spdif_stream(24)
+        words, _ = await spdif_rx_run(dut, sent, program=program)
+        got = decode(words)
+        skip = spdif_locked_tail(got, sent)
+        assert skip is not None, f"{program}: never lined up: {got[:2]}"
+        n = min(len(got), len(sent) - skip)
+        assert n >= 16, f"{program}: only {n} subframes"
+        assert got[:n] == sent[skip:skip + n], \
+            f"{program}: {sum(a != b for a, b in zip(got, sent[skip:]))} subframes wrong of {n}"
 
 
 @cocotb.test()
 async def test_spdif_receive_block_of_192_frames(dut):
     """More than a whole block: B must appear exactly every 384 subframes, and no data may be lost."""
     await reset(dut)
-    sent = spdif_stream(384 + 40)
-    words, trace = await spdif_rx_run(dut, sent)
-    got = spdif_decode_words(words)
-    skip = spdif_locked_tail(got, sent)
-    assert skip is not None
-    n = min(len(got), len(sent) - skip)
-    wrong = sum(a != b for a, b in zip(got[:n], sent[skip:skip + n]))
-    dut._log.info(f"block: {n} subframes decoded, {wrong} wrong, joined after {skip}")
-    assert n >= 384 and wrong == 0, f"{n} subframes, {wrong} wrong"
-    clean = trace[3000:-800]  # the receiver rightly loses sync once the stream stops at the end
-    assert not any((t[0] >> 5) & 1 for t in clean), "ERR set on a clean stream"
-    assert not any((t[0] >> 6) & 1 for t in clean), "PERR set on a clean stream"
-    assert any((t[0] >> 7) & 1 for t in trace), "SYNC never showed the block start"
+    for program, decode in SPDIF_RX.items():
+        sent = spdif_stream(384 + 40)
+        words, trace = await spdif_rx_run(dut, sent, program=program)
+        got = decode(words)
+        skip = spdif_locked_tail(got, sent)
+        assert skip is not None, program
+        n = min(len(got), len(sent) - skip)
+        wrong = sum(a != b for a, b in zip(got[:n], sent[skip:skip + n]))
+        dut._log.info(f"{program} block: {n} subframes decoded, {wrong} wrong, joined after {skip}")
+        assert n >= 384 and wrong == 0, f"{program}: {n} subframes, {wrong} wrong"
+        clean = trace[3000:-800]  # the receiver rightly loses sync once the stream stops at the end
+        assert not any((t[0] >> 5) & 1 for t in clean), f"{program}: ERR set on a clean stream"
+        assert not any((t[0] >> 6) & 1 for t in clean), f"{program}: PERR set on a clean stream"
+        assert any((t[0] >> 7) & 1 for t in trace), f"{program}: SYNC never showed the block start"
 
 
 @cocotb.test()
 async def test_spdif_receive_polarity_inverted(dut):
     await reset(dut)
-    sent = spdif_stream(24)
-    words, _ = await spdif_rx_run(dut, sent, invert=True)
-    got = spdif_decode_words(words)
-    skip = spdif_locked_tail(got, sent)
-    assert skip is not None, "no lock on an inverted stream"
-    n = min(len(got), len(sent) - skip)
-    assert n >= 16 and got[:n] == sent[skip:skip + n]
+    for program, decode in SPDIF_RX.items():
+        sent = spdif_stream(24)
+        words, _ = await spdif_rx_run(dut, sent, invert=True, program=program)
+        got = decode(words)
+        skip = spdif_locked_tail(got, sent)
+        assert skip is not None, f"{program}: no lock on an inverted stream"
+        n = min(len(got), len(sent) - skip)
+        assert n >= 16 and got[:n] == sent[skip:skip + n], program
 
 
 @cocotb.test()
 async def test_spdif_receive_clock_drift(dut):
     """The sender's clock off by each amount. Records the widest that holds, and needs IEC's 0.1% at least."""
     await reset(dut)
-    results = {}
-    for offset in (-0.03, -0.02, -0.01, -0.001, 0.001, 0.01, 0.02, 0.03):
-        sent = spdif_stream(40)
-        words, _ = await spdif_rx_run(dut, sent, rate=1 + offset)
-        got = spdif_decode_words(words)
-        skip = spdif_locked_tail(got, sent)
-        n = 0 if skip is None else min(len(got), len(sent) - skip)
-        results[offset] = skip is not None and n >= 30 and got[:n] == sent[skip:skip + n]
-    dut._log.info(f"drift tolerance: {results}")
-    assert results[-0.001] and results[0.001], f"{results}"
+    for program, decode in SPDIF_RX.items():
+        results = {}
+        for offset in (-0.03, -0.02, -0.01, -0.001, 0.001, 0.01, 0.02, 0.03):
+            sent = spdif_stream(40)
+            words, _ = await spdif_rx_run(dut, sent, rate=1 + offset, program=program)
+            got = decode(words)
+            skip = spdif_locked_tail(got, sent)
+            n = 0 if skip is None else min(len(got), len(sent) - skip)
+            results[offset] = skip is not None and n >= 30 and got[:n] == sent[skip:skip + n]
+        dut._log.info(f"{program} drift tolerance: {results}")
+        assert results[-0.001] and results[0.001], f"{program}: {results}"
+        if program == "spdif_rx_code.s":  # clock recovery at every edge, and a period measured from the stream
+            assert all(results.values()), f"{program}: {results}"
 
 
 @cocotb.test()
 async def test_spdif_receive_flags_parity_and_preamble_errors(dut):
     """One audio bit flipped with parity left alone, then one state of an M preamble changed."""
     await reset(dut)
-    sent = spdif_stream(24)
-    name, bits = sent[12]
-    sent[12] = (name, [bits[0] ^ 1] + bits[1:])
-    _, trace = await spdif_rx_run(dut, sent)
-    wave_at = [i for i, t in enumerate(trace) if (t[0] >> 6) & 1]
-    assert wave_at, "parity error wasn't flagged"
-    frame = len(wave_at) / (FRAME_CYCLES / 2)
-    assert frame < 2, f"PERR stayed high for {frame:.1f} subframes"
+    for program in SPDIF_RX:
+        sent = spdif_stream(24)
+        name, bits = sent[12]
+        sent[12] = (name, [bits[0] ^ 1] + bits[1:])
+        _, trace = await spdif_rx_run(dut, sent, program=program)
+        wave_at = [i for i, t in enumerate(trace) if (t[0] >> 6) & 1]
+        assert wave_at, f"{program}: parity error wasn't flagged"
+        frame = len(wave_at) / (FRAME_CYCLES / 2)
+        assert frame < 2, f"{program}: PERR stayed high for {frame:.1f} subframes"
 
-    sent = spdif_stream(24)
-    states = spdif_states(sent)
-    m_at = 32 * 2 * 8  # the 9th subframe is an M
-    assert sent[8][0] == "M"
-    states[m_at + 5] ^= 1
-    wave = spdif_wave(states)
-    await spdif_rx_start(dut)
-    words, trace = await spdif_receive(dut, wave)
-    await stop(dut)
-    assert any((t[0] >> 5) & 1 for t in trace), "a damaged M preamble wasn't noticed"
+        sent = spdif_stream(24)
+        states = spdif_states(sent)
+        m_at = 32 * 2 * 8  # the 9th subframe is an M
+        assert sent[8][0] == "M"
+        states[m_at + 5] ^= 1
+        wave = spdif_wave(states)
+        await spdif_rx_start(dut, program)
+        words, trace = await spdif_receive(dut, wave)
+        await stop(dut)
+        assert any((t[0] >> 5) & 1 for t in trace[3000:]), f"{program}: a damaged M preamble wasn't noticed"
 
 
 def spdif_read_line(levels):
@@ -763,7 +786,8 @@ def spdif_split(states):
     return out
 
 
-async def spdif_transmit(dut, subframes_count):
+async def spdif_transmit(dut, subframes_count, program="trial/spdif_tx.s"):
+    """spdif_tx_code.s takes slot 31, even parity, from the host as the 16th bit of the second word."""
     from test import capture
     import test as host
     saved, host.HALF = host.HALF, 4
@@ -773,10 +797,10 @@ async def spdif_transmit(dut, subframes_count):
         sent = spdif_payload(i)
         payloads.append(sent)
         word1 = sum(b << k for k, b in enumerate(sent[:12]))
-        word2 = sum(b << k for k, b in enumerate(sent[12:27]))
+        word2 = sum(b << k for k, b in enumerate(sent[12:28 if program == "spdif_tx_code.s" else 27]))
         feed += [word1, word2]
     await stop(dut)
-    await load_program(dut, firmware("trial/spdif_tx.s").words)
+    await load_program(dut, firmware(program).words)
     await fifo_write(dut, feed[:4])
     fed = 4
     done = []
@@ -806,23 +830,25 @@ async def spdif_transmit(dut, subframes_count):
 async def test_spdif_transmit_known_preambles_and_block(dut):
     """A whole block, read back by an edge-only decoder: preambles, data, parity, and the rate."""
     await reset(dut)
-    count = 384 + 20
-    payloads, trace = await spdif_transmit(dut, count)
-    levels = [(t[0] >> 4) & 1 for t in trace]
-    assert not any((t[0] >> 5) & 1 for t in trace[:-200]), "the host fell behind"
-    states, edges, runs = spdif_read_line(levels)
-    khz = (len(states) / 128) / ((edges[-1] - edges[0]) / 50e6) / 1000
-    dut._log.info(f"frame rate {khz:.3f} kHz over {len(states) / 128:.1f} frames. Gaps seen, in cycles: {sorted(set(runs))}")
-    got = spdif_split(states)
-    assert got[0][0] == "B", f"first preamble is {got[0][0]}"
-    names = [g[0] for g in got]
-    wanted = ["B" if i % 384 == 0 else ("W" if i % 2 else "M") for i in range(len(names))]
-    assert names == wanted, f"preamble order breaks at {next(i for i, (a, b) in enumerate(zip(names, wanted)) if a != b)}"
-    n = min(len(got), len(payloads)) - 1
-    wrong = [i for i in range(n) if got[i][1] != payloads[i]]
-    assert not wrong, f"{len(wrong)} of {n} subframes wrong, first {wrong[0]}: {got[wrong[0]][1]} vs {payloads[wrong[0]]}"
-
-    assert abs(khz - 48) / 48 < 0.001, f"{khz:.3f} kHz is outside IEC's 0.1% tolerance"
+    for program in ("trial/spdif_tx.s", "spdif_tx_code.s"):
+        count = 384 + 20
+        payloads, trace = await spdif_transmit(dut, count, program)
+        levels = [(t[0] >> 4) & 1 for t in trace]
+        assert not any((t[0] >> 5) & 1 for t in trace[:-200]), f"{program}: the host fell behind"
+        states, edges, runs = spdif_read_line(levels)
+        khz = (len(states) / 128) / ((edges[-1] - edges[0]) / 50e6) / 1000
+        dut._log.info(f"{program}: frame rate {khz:.3f} kHz over {len(states) / 128:.1f} frames. "
+                      f"Gaps seen, in cycles: {sorted(set(runs))}")
+        got = spdif_split(states)
+        assert got[0][0] == "B", f"{program}: first preamble is {got[0][0]}"
+        names = [g[0] for g in got]
+        wanted = ["B" if i % 384 == 0 else ("W" if i % 2 else "M") for i in range(len(names))]
+        assert names == wanted, \
+            f"{program}: preamble order breaks at {next(i for i, (a, b) in enumerate(zip(names, wanted)) if a != b)}"
+        n = min(len(got), len(payloads)) - 1
+        wrong = [i for i in range(n) if got[i][1] != payloads[i]]
+        assert not wrong, f"{program}: {len(wrong)} of {n} subframes wrong, first {wrong[0]}"
+        assert abs(khz - 48) / 48 < 0.001, f"{program}: {khz:.3f} kHz is outside IEC's 0.1% tolerance"
 
 
 # ------------------------------------------------------------------ SD, native bus mode

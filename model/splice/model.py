@@ -303,8 +303,8 @@ class Splice:
                 and (op == "OUTB" or (op == "OUT" and not f["ns"])))
 
     def coded_rx(self, c, op):
-        """IN and INB at one lane, with NRZI or stuffing on. Manchester is transmit only."""
-        return c.lanes == 1 and not c.cd_man and (c.cd_nrzi or c.cd_n) and op in ("IN", "INB")
+        """IN and INB at one lane, with NRZI, stuffing, Manchester or biphase-mark on."""
+        return c.lanes == 1 and (c.cd_nrzi or c.cd_n or c.cd_man) and op in ("IN", "INB")
 
     @staticmethod
     def stuff_due(c):
@@ -328,8 +328,12 @@ class Splice:
         """Drives the coded line. Returns True when the instruction repeats: a stuff bit or a first half-bit."""
         b = self.sbit(c)
         if c.cd_man:
-            first = (b if c.cd_pol else 1 - b)
-            self.code_drive(c, f["line"], first if not c.half else 1 - first)
+            if c.cd_nrzi:  # biphase: every bit starts with a change, and a mark (or a space, pol) has a second
+                v = 1 - cur if not c.half else cur ^ b ^ c.cd_pol
+            else:
+                first = (b if c.cd_pol else 1 - b)
+                v = first if not c.half else 1 - first
+            self.code_drive(c, f["line"], v)
             c.half = 1 - c.half
             if c.half:
                 return True
@@ -344,8 +348,20 @@ class Splice:
         return stuffed
 
     def code_rx(self, c, f):
-        """Samples and decodes one bit. Returns (repeat, bit): repeat for a stuff bit, which sets F if wrong."""
+        """Samples and decodes one bit. Returns (repeat, bit): repeat for a stuff bit, which sets F if wrong,
+        or for a first half-bit. A half-bit pair that breaks the code also sets F: Manchester's two halves
+        equal, or biphase without the change at a bit's start."""
         s = self.line(f["line"])
+        if c.cd_man:
+            same = s == c.rxp
+            if c.cd_nrzi:
+                bad, d = same and not c.half, int(not same) ^ c.cd_pol
+            else:
+                bad, d = same and c.half, c.rxp if c.cd_pol else s
+            if bad:
+                c.F = 1
+            c.rxp, c.half = s, 1 - c.half
+            return bool(c.half), d
         d = int(s == c.rxp) if c.cd_nrzi else s
         c.rxp = s
         stuffed = self.stuff_due(c)
@@ -408,7 +424,7 @@ class Splice:
             self.src[f["line"]] = f["src"]
         elif op in ("OUT", "OUTB") and self.coded_tx(c, op, f):
             cur = eng_before[f["line"]] if f["line"] < 12 else 0
-            self.cover("CODE.man" if c.cd_man else "CODE.stuff.tx" if self.stuff_due(c) else
+            self.cover(("CODE.bmc" if c.cd_nrzi else "CODE.man") if c.cd_man else "CODE.stuff.tx" if self.stuff_due(c) else
                        "CODE.nrzi.tx" if c.cd_nrzi else "CODE.data.tx")
             if self.code_tx(c, f, cur):
                 next_pc = c.pc  # a stuff bit or a first half-bit: the same instruction again
@@ -419,8 +435,13 @@ class Splice:
         elif op in ("IN", "INB") and self.coded_rx(c, op):
             f_before = c.F
             stuffed, d = self.code_rx(c, f)
-            self.cover("CODE.stuff.rx" if stuffed else "CODE.nrzi.rx" if c.cd_nrzi else "CODE.data.rx")
-            if stuffed and c.F and not f_before:
+            if c.cd_man:
+                self.cover(("CODE.bmc.rx" if c.cd_nrzi else "CODE.man.rx") + (".h1" if stuffed else ".h2"))
+                if c.F and not f_before:
+                    self.cover("CODE.codeerr")
+            else:
+                self.cover("CODE.stuff.rx" if stuffed else "CODE.nrzi.rx" if c.cd_nrzi else "CODE.data.rx")
+            if stuffed and c.F and not f_before and not c.cd_man:
                 self.cover("CODE.stufferr")
             if stuffed:
                 next_pc = c.pc
