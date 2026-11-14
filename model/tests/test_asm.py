@@ -184,6 +184,21 @@ def test_name_clashes_and_nested_calls_are_reported():
     assert not assemble("code nrzi, diff\nhalt").warnings
 
 
+def test_run_command_sends_and_receives_a_uart_byte(tmp_path=None):
+    # splice.run is the no-simulator way to try a program. Transmit, then feed the same bits to the receiver
+    from splice.run import run, write_vcd
+    here = os.path.join(os.path.dirname(__file__), "..", "firmware")
+    _, _, trace, _ = run(open(os.path.join(here, "uart_tx.s")).read(), 6000, push=[0xA3])
+    falls = [t for (t, now), (_, before) in zip(trace[1:], trace) if (before[0] >> 4) & 1 and not (now[0] >> 4) & 1]
+    assert falls and all((b - a) % 434 == 0 for a, b in zip(falls, falls[1:])), falls
+    bits = [1, 0] + [(0xA3 >> i) & 1 for i in range(8)] + [1]  # idle, start, LSB first, stop
+    _, _, _, popped = run(open(os.path.join(here, "uart_rx.s")).read(), 6000, stimuli=[(0, bits, 434)])
+    assert [w >> 8 for _, w in popped] == [0xA3], popped
+    if tmp_path is not None:
+        write_vcd(str(tmp_path / "t.vcd"), trace, 6000)
+        assert "$enddefinitions" in (tmp_path / "t.vcd").read_text()
+
+
 def test_errors_are_rejected():
     for bad in ("set 16, 1", "mode 4, bogus", "jmp nowhere", "outb 4, later\nnop\nlater: nop", "ldi r9, 1",
                 "dly 5000", "bogus 1", "tset 8192", "set 4, 1 side=2"):
