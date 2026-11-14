@@ -50,7 +50,9 @@
 
   "//": "Hold slack margin - Increase them in case you are getting hold violations.",
   "PL_RESIZER_HOLD_SLACK_MARGIN": 0.1,
-  "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.05,
+  "//": "0.2 ns after routing, from 0.05: hold is the one failure a slower clock can't fix. On v2 it lifted",
+  "//": "worst hold slack from 0.080 to 0.187 ns for 5.9% more cell area (gds 43062715114).",
+  "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.2,
 
   "//": "RUN_LINTER, LINTER_INCLUDE_PDK_MODELS - Disabling the linter is not recommended!",
   "RUN_LINTER": 1,
@@ -63,6 +65,8 @@
   "//": "SRAM macros, see macro/README.md. Metal4 is the only PDN layer available to the project,",
   "//": "so the macro cannot be strapped from above: Splice.PowerColumns turns the macro's supply",
   "//": "columns into stripes instead. Macro spacing is set by the floorplan rule in macro/README.md.",
+  "//": "Both macros are mirrored (MX) so their pins, all on one long edge, face the core above",
+  "//": "instead of the 37.8 um strip under them. R0 routes every DOUT and ADDR around a 191 um tall macro.",
   "meta": {
     "flow": "Classic",
     "substituting_steps": {
@@ -73,8 +77,8 @@
   "MACROS": {
     "RM_IHPSG13_1P_512x16_c2_bm_bist": {
       "instances": {
-        "prog_sram": { "location": [377.76, 37.8], "orientation": "R0" },
-        "cap_sram": { "location": [678.24, 37.8], "orientation": "R0" }
+        "prog_sram": { "location": [377.76, 37.8], "orientation": "MX" },
+        "cap_sram": { "location": [678.24, 37.8], "orientation": "MX" }
       },
       "gds": ["dir::../macro/RM_IHPSG13_1P_512x16_c2_bm_bist/RM_IHPSG13_1P_512x16_c2_bm_bist.gds"],
       "lef": ["dir::../macro/RM_IHPSG13_1P_512x16_c2_bm_bist/RM_IHPSG13_1P_512x16_c2_bm_bist.lef"],
