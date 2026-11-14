@@ -4,7 +4,7 @@ Start here. This page explains the project, every decision so far and the ideas 
 The technical source of truth is [`architecture.md`](architecture.md). If the two disagree, that spec wins, and
 this page needs fixing.
 
-*Last updated: 2026-11-07.*
+*Last updated: 2026-11-14.*
 
 ## In one paragraph
 
@@ -15,12 +15,16 @@ load new ones after the chip is made. It also does something an ordinary emulato
 middle of a live connection between two chips** and alter the traffic as it passes.
 
 **Where it stands:**
-- **Written and tested:** the whole chip exists as RTL (the hardware description). It passes 48 tests in
-  simulation, and the same tests on the final post-layout netlist. It passes Tiny Tapeout's build and precheck.
-- **Protocols:** 10 protocol families run on the same chip with only a program change. 9 more were added in a
-  test where someone else picked most of them, and those needed no change to the chip either.
-- **Timing:** an experiment branch now runs at the 50 MHz target in the worst case, but isn't merged yet.
+- **Written and tested:** the whole chip exists as RTL (the hardware description), in its second version
+  (v2), sized for the 8x4 tiles the organisers confirmed. Its tests pass in simulation and again on the final
+  post-layout netlist, and it passes Tiny Tapeout's build and precheck.
+- **Protocols:** 23 protocol families run on the same chip with only a program change. 13 of them came from
+  two blind trials, where the protocols weren't picked to suit the design, and needed no change to the chip.
+- **Timing:** it meets 50 MHz in the worst case. The margins were thin, and a fix is being adopted
+  ([`roadmap.md`](roadmap.md)).
 - **Not done:** nothing has been on a real chip or board.
+- **What's next:** one last round of features, a freeze on 2026-11-29, then a third trial, demos and the
+  write-up. The plan is in [`roadmap.md`](roadmap.md).
 
 ## The competition
 
@@ -85,8 +89,11 @@ different from an ordinary small processor:
    timer, or from an edge on an input line, so the same instructions can follow an outside clock such as SPI's.
 3. **`MODE`.** This switches a line's source on an exact cycle, and it's what makes interposing possible.
 
-There's no hardware for any particular protocol. CRCs, bit stuffing, Manchester and clock recovery are all
-done in software, which is why new protocols need only a new program.
+There's no hardware for any particular protocol. What v2 does have is a few general building blocks that
+many protocols share, each set up by firmware: a CRC step with a programmable polynomial, and a line coder
+(`CODE`) for NRZI, bit stuffing, Manchester and clock recovery. Everything they do can also be done in plain
+instructions, and was at first; the blocks make it shorter and fast enough to share the engine between four
+programs.
 
 ## Concepts worth knowing
 
@@ -145,7 +152,9 @@ receive with its clock recovery removed has to fail.
 | **Fast pass-through** | One flop instead of two, per line, off by default | 50% faster inline SPI. Only a line where someone turns it on carries the metastability risk | Always on; not having it | Testing shows the risk isn't worth it |
 | **Engine decode for timing** | Instructions decoded straight from their bits, one write path per register | It fixed most of the timing problem at the slow corner without changing behaviour | A 1-cycle penalty on taken jumps, which would cost tight programs like USB | |
 | **Host board** | RP2350 on the ETR demo board, bit-banging SPI | The board's pins aren't on a hardware SPI port | | The trial showed it would be far too slow for sustained traffic, so this needs work |
-| **Line coder** | Deferred | Software already does CRC, stuffing and Manchester for every protocol tried | Building it before the trial's findings are ranked | The ISA review |
+| **Line coder** | Built in v2 (`CODE`) | USB took half the instructions and ran in one of four contexts, which the software version couldn't | Leaving it in software, which worked but couldn't share the engine | |
+| **Feature freeze** | 2026-11-29, after one last round from trial 2's gaps | Trial 2 found nothing the chip couldn't do, and every feature spends timing margin and write-up time | Adding features until the deadline | A trial finding a protocol that's blocked |
+| **Timing margin** | Hold first: repair hold to 0.2 ns, and mirror the SRAM macros for setup | A slower clock fixes a setup miss on a real chip; nothing fixes a hold miss | Leaving hold at 0.08 ns | |
 | **Match rules** | Stretch goal, encoding reserved | Novel, but unproven beyond UART | Building them now | Proving them on SPI and I2C |
 
 ## Verification
@@ -170,27 +179,28 @@ write-up is in [`verification.md`](verification.md).
 
 [`ai-log.md`](ai-log.md) records what AI tools wrote and how each piece was checked.
 
-## The adaptability trial
+## The adaptability trials
 
-This is the most direct answer to the competition's question. A different AI model picked 5 protocols without
-seeing the design, and I implemented them with **no changes to the chip**, only firmware. I added 4 of my own,
-which count as weaker evidence. Full results are in [`adaptability.md`](adaptability.md).
+These are the most direct answer to the competition's question. Full results are in
+[`adaptability.md`](adaptability.md) and [`../lab/explore/trial2.md`](../lab/explore/trial2.md).
+
+**Trial 1, on v1.** A different AI model picked 5 protocols without seeing the design, and I implemented them
+with **no changes to the chip**, only firmware. I added 4 of my own, which count as weaker evidence.
 
 - **At full speed:** HDLC, DALI, S/PDIF at 48 kHz, MDIO, LIN, SENT and HDMI-CEC.
-- **Working, but slower than asked:** SD cards, at 6–8 MHz against 25.
+- **Working, but slower than asked:** SD cards, at 6-8 MHz against 25.
 - **Out of reach, as expected:** 100BASE-TX Ethernet needs a symbol every 8 ns, and a pin can only change every
-  20 ns. All of its logic works, but at up to 1.25 MBd against 125.
+  20 ns.
 
-**More useful than the passes is what got in the way.** In order of how much it matters:
-- The host link: an 8-word buffer each way over a slow SPI port, with a full-duplex exchange command.
-- Too few registers.
-- No register-to-register add.
-- A timer period that can't be set from a register.
-- A flag shared by too many things.
-- A `PROBE` instruction whose result reads backwards, which caused 3 of my bugs.
-- Contexts that can't pass data to each other. (v2 adds link FIFOs between four contexts.)
+What got in the way mattered more than the passes: a narrow host link, too few registers, no register add, a
+timer that couldn't be set from a register, contexts that couldn't pass data. **v2 was built from that list.**
 
-Fixing the most important of these is the next phase.
+**Trial 2, on v2.** Four protocols drawn at random from a list of 12 candidates: BiSS-C (an encoder interface
+that has to measure and cancel its cable's delay), NEC infrared, NMRA DCC (model railway control) and
+ARINC 429 (avionics). **All four work in both directions at full rate, again with no change to the chip.**
+Nothing was blocked. The gaps left are about how long the firmware is, and the top few are the last feature
+round before the freeze. One caution: the list of candidates was mine, so a third trial, with protocols named
+by someone else, will run on the frozen chip.
 
 ## What's been shown, and what hasn't
 
@@ -224,13 +234,13 @@ slow corner passes at 50 MHz with 3.16 ns to spare, with no setup or hold violat
 
 ## What comes next
 
-1. **Merge the timing work** into the main branch, taking the cleanest build that meets 50 MHz, and stop
-   working on speed for now.
-2. **Rank the trial's gaps** by how many protocols each one helps, and propose the top few ISA and host-link
-   changes for approval.
-3. **Make the approved changes,** then rerun the trial to measure the difference. A fresh trial, with protocols
-   picked again by someone else, would show whether the changes generalise.
-4. **Then the rest:** match rules if there's time, demos, and the final documentation.
+The full plan, with dates, is in [`roadmap.md`](roadmap.md). In short:
+
+1. **Now:** make `main` the v2 chip, with the timing-margin fixes.
+2. **By 2026-11-29:** a last round of small features from trial 2's gaps, then freeze the chip.
+3. **December:** a third blind trial on the frozen chip, a tutorial, demos, and the spec rewritten as a
+   reference.
+4. **January:** the verification and AI-use write-ups, signoff, submission by the 18th.
 
 ## Where to read more
 
@@ -238,6 +248,7 @@ slow corner passes at 50 MHz with 3.16 ns to spare, with no setup or hold violat
 |---|---|
 | [`architecture.md`](architecture.md) | The full spec, including ISA v1 and the opcode map |
 | [`adaptability.md`](adaptability.md) | The blind protocol trial: results, gaps found, and bugs |
+| [`roadmap.md`](roadmap.md) | The review of every decision, and the plan to submission |
 | [`verification.md`](verification.md) | How the design is checked, what that found, and known gaps |
 | [`isa/flexibility.md`](isa/flexibility.md) | The first protocol study, the I2C bridge, and line coding |
 | [`isa/exploration.md`](isa/exploration.md) | How the ISA was chosen, including Tomasulo and the research sources |

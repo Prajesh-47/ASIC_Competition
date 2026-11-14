@@ -16,13 +16,14 @@ export to sigrok/PulseView.
 
 Full architecture: see `docs/architecture.md` in the project repository.
 
-> Status: early. The engine, SPI loader and line sources work in simulation and gate-level tests. The
-> capture unit and the open-drain bridge are not built yet.
+> Status: the whole design is built and passes its tests in RTL and gate-level simulation: the engine with
+> four contexts, the SPI host port (with a 4-bit mode), the line sources, the open-drain bridge and the
+> capture unit. Nothing has run on silicon yet.
 
 ## How to test
 
 1. Run the clock at 50 MHz and release `rst_n`. All `uio` pins stay hi-Z until a program configures them.
-2. Assemble a program: `python3 -m splice.asm firmware/uart_tx.s -o uart_tx.hex` (in `model/`).
+2. Assemble a program: `python3 -m splice.asm firmware/uart_tx.s -o uart_tx.hex` (in `model/`). To try it first with no hardware: `python3 -m splice.run firmware/uart_tx.s --push 0x55`.
 3. Load it over the host SPI port (`ui[2:0]`, `uo[0]`, mode 0, at most core/8): `0x01 0x00 0x00` then the words, big-endian.
 4. Push data with `0x20` then words, and start with `0x10`. `uo[3]` goes high while running. Stop with `0x11`.
 5. To change protocol, stop, load another program, and start again. Nothing else needs to change.

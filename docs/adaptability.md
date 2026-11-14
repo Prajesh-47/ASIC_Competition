@@ -119,13 +119,50 @@ measured against it.
 | **Quad host mode** (register 23 bit 0, branch `exp/v2`): 4 bits each way per SCK edge, on the AUX pins | The host link is narrow | **SD at SCK = core/8** (`test_sd_xfer.py`): a block read takes 14,784 cycles against 45,168 single-lane, 3.06x, and a write 16,896 against 51,408, 3.04x. With the link out of the way LANES pays end to end on reads, 40.7 cycles a word against 65.1. Every command is unchanged, and the mode is off at reset. **Cost** (gds 43008405553): all jobs green, setup 1.15 ns at the slow corner, standard-cell area 333,841 µm², but one max-slew violation at the slow and typical corners, gone again in the next build |
 | **`CODE`, the line coder** (branch `exp/v2`): NRZI, bit stuffing (`ones n` or `equal n`), Manchester, a differential pair, and clock recovery that re-phases the period timer on an edge | USB and CAN spent most of their instructions on coding; software USB couldn't share the engine | **USB low speed** (`test_protocols.py`, against the same wire checkers as the software versions): transmit 29 words against 59, down to 6 cycles a bit against 14; receive 27 words against 57, 12 cycles a bit against 33, at ±1.5% clock error. **Both run at USB's rate in one of four contexts**, where the software versions can't keep up. Stuff and Manchester half-bits repeat the instruction, so `BC`, loops and `CRC` see data bits only. **Cost** (gds 43057575382 against the quad build 43008405553): standard-cell area +5.3% (333,841 to 351,547 µm²), 36.6% of the die; setup slack at the slow corner 0.27 ns, from 1.15, since a repeat holds the PC on the fetch path; hold 0.080 ns; no slew, capacitance or fanout violations (the quad build had one slew violation at the slow and typical corners). All jobs green |
 
+## Second trial, on v2
+
+*Run 2026-11-11, in RTL simulation, on `exp/v2` with no change to the RTL, the ISA or the assembler. The full
+report, with the firmware's design, every bug and the complete gap list, is
+[`lab/explore/trial2.md`](../lab/explore/trial2.md).*
+
+Four protocols were drawn with a fixed random seed from a list of 12 candidates. **The list was written by the
+designer's side, so by rule 1 above this is weaker evidence than the first trial's picks**, even though the
+draw from it was random. Each device model and checker was written from the protocol's own sources, not from
+the firmware, and every host is a real one that only uses `XFER` over SPI.
+
+| Protocol | Works? | Rate reached | Words | Contexts |
+|---|---|---|---:|---:|
+| BiSS-C master, with line-delay compensation, CDM/CDS and CRC-6 | **Yes** | MA at 4.17 MHz, cable delay tested to 2 µs (over 8 bit times) | 100 | 2 |
+| NEC infrared transmit, the 38 kHz carrier made in firmware | **Yes** | Full rate; bursts on the 562.5 µs grid to the cycle | 96 | 1 |
+| NEC infrared receive | **Yes** | Full rate; ±10% sender clock, ±120 µs burst distortion | 158 | 1 |
+| NMRA DCC command station | **Yes** | Exact 58/100 µs halves, idle packets when the host has none | 59 | 1 |
+| NMRA DCC decoder | **Yes** | The full S-9.1 receive window, either polarity, stretched zeros | 81 | 1 |
+| ARINC 429 transmit | **Yes** | 100 and 12.5 kbit/s | 44 | 1 |
+| ARINC 429 receive, self-clocked | **Yes** | 100 kbit/s ±1% with jitter; 12 to 14.5 kbit/s | 88 | 1 |
+
+NEC, DCC and ARINC also each run as transmitter and receiver at once, as two contexts of one chip.
+
+**Nothing was blocked, and nothing ran slower than its protocol asks**, which the first trial couldn't say (SD
+ran at a quarter of its rate there). BiSS-C is the one that needed v2: its master measures the cable's round
+trip with `TCAP` in one context while another keeps the clock running, then samples every bit that much late.
+On v1 that would have been two chips.
+
+**What still got in the way** made firmware longer, not impossible. The top of the list, by how many of the
+four protocols each hurt:
+
+1. No compare or subtract against a 16-bit constant: every range check is 6 to 8 words (3 of 4).
+2. Four registers: `TO` gets borrowed as a fifth (2 of 4).
+3. `CALL` is one level, and the assembler didn't say so (2 of 4). *The assembler now warns.*
+4. Timing constants depend on how many contexts run (2 of 4).
+5. `TCAP` saturates at 1.31 ms (2 of 4).
+6. Two programs in one image clash on names (2 of 4). *The assembler now reports it.*
+
+It also found a bug in the golden model, not the chip: `LDP`'s address was 8 bits there and 9 in the RTL. Fixed,
+with a test.
+
 ## Next
 
-These gaps point to ISA and host-link changes. The plan:
-1. Rank them by how many protocols each one helps.
-2. Get approval for the top few.
-3. Make the changes.
-4. Rerun this trial to measure the difference.
-
-A second trial, with protocols picked fresh by someone else, would test whether the changes generalise rather
-than only fixing the cases seen here.
+The gaps above that need silicon are the last feature round before the chip freezes on 2026-11-29. After the
+freeze a third trial runs with no change allowed, on protocols named by someone who has seen neither the design
+nor the candidate list, and it records how long each protocol took to its first working frame. The plan is in
+[`roadmap.md`](roadmap.md).
