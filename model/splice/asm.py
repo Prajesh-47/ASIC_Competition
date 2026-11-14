@@ -262,13 +262,16 @@ def _parse(line):
 
 def assemble(source, defines=None):
     """Assemble text into a Program, or raise AsmError with the line number."""
-    names, lines, ctx_labels = dict(defines or {}), [], [None, None, None]
+    names, lines, ctx_labels, first_line = dict(defines or {}), [], [None, None, None], {}
     for number, raw in enumerate(source.splitlines(), 1):
         line = _clean(raw)
         while True:
             m = re.match(r"(\w+):\s*(.*)", line)
             if not m:
                 break
+            if m.group(1) in first_line:
+                raise AsmError(f"line {number}: label {m.group(1)} is already defined on line {first_line[m.group(1)]}")
+            first_line[m.group(1)] = number
             lines.append((number, m.group(1) + ":"))
             line = m.group(2)
         if line:
@@ -276,15 +279,21 @@ def assemble(source, defines=None):
     labels = {}
     # Sizes depend on values and values on labels, so iterate until the layout stops moving.
     for _ in range(8):
-        pc, new = 0, {}
+        pc, new, equ_line = 0, {}, {}
         for number, line in lines:
             try:
                 if line.endswith(":"):
                     new[line[:-1]] = pc
                 elif line.startswith(".equ"):
                     name, value = line[4:].split(",", 1)
-                    if name.strip() not in (defines or {}):  # a -D on the command line wins
-                        names[name.strip()] = evaluate(value, names)
+                    name = name.strip()
+                    if name not in (defines or {}):  # a -D on the command line wins
+                        value = evaluate(value, names)
+                        # Names are global and every use sees the last value, so a second, different
+                        # definition would silently change the words before it. Trial 2 lost a test to this
+                        if name in equ_line and names[name] != value:
+                            raise AsmError(f"{name} is already {names[name]}, from line {equ_line[name]}")
+                        names[name], equ_line[name] = value, number
                 elif re.match(r"\.ctx[123]\b", line):
                     ctx_labels[int(line[4]) - 1] = line[5:].strip()
                 elif line.startswith(".") and not line.startswith(".word"):
@@ -326,6 +335,26 @@ def assemble(source, defines=None):
         if previous == "PROBE" and mnemonic.upper() == "JMP" and args and args[0].upper() in ("Z", "NZ"):
             warnings.append(f"line {number}: {line}: after PROBE, write jmp hi/lo (z means the line is high)")
         previous = mnemonic.upper()
+        if mnemonic.upper() == "CODE" and any(a.split()[0].upper() == "DIFF" for a in args) and not any(
+                a.split()[0].upper() in ("NRZI", "ONES", "EQUAL", "MAN", "BMC") for a in args):
+            warnings.append(f"line {number}: {line}: diff does nothing without nrzi, stuffing or man; "
+                            "for a plain complementary pair use side=")
+    # CALL keeps one return address per context. A CALL between a routine's entry and its first RET
+    # overwrites it, and the outer RET then returns into the inner caller. The check is by layout, not by
+    # control flow, so it's a warning.
+    ops = {pc_: (_parse(line)[0].upper(), number, line) for pc_, _, line, number in listing}
+    for pc_, (mnemonic, number, line) in ops.items():
+        if mnemonic != "CALL":
+            continue
+        target = labels.get(_parse(line)[3][-1])
+        at = target
+        while at is not None and at in ops and ops[at][0] not in ("RET", "HALT"):
+            if ops[at][0] == "CALL":
+                warnings.append(f"line {ops[at][1]}: {ops[at][2]}: CALL inside a routine called from line "
+                                f"{number}; calls are one level deep, so its RET would return here")
+                break
+            at += 1
+    warnings = list(dict.fromkeys(warnings))
     return Program(words, labels, ctx[0], listing, warnings, ctx)
 
 
@@ -354,6 +383,8 @@ def main():
     if opts.output:
         with open(opts.output, "w", encoding="utf-8") as out:
             out.writelines(f"{w:04x}\n" for w in prog.words)
+    for warning in prog.warnings:
+        print(f"{opts.source}: warning: {warning}", file=sys.stderr)
     print(f"{opts.source}: {len(prog.words)} words", file=sys.stderr)
 
 

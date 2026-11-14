@@ -165,6 +165,25 @@ def test_ldp_reaches_the_whole_512_word_memory():
     assert m.e2h == [0xCAFE]
 
 
+def test_name_clashes_and_nested_calls_are_reported():
+    # Blind trial 2 hit all of these when two programs were put in one image
+    for bad, message in (("a: nop\nnop\na: halt", "label a is already defined on line 1"),
+                         (".equ A, 0\nset A, 1\n.equ A, 4\nhalt", "A is already 0, from line 1")):
+        try:
+            assemble(bad)
+        except AsmError as err:
+            assert message in str(err), err
+        else:
+            raise AssertionError(bad)
+    assert assemble(".equ A, 3\n.equ A, 3\nhalt").words  # the same value twice is fine
+    nested = assemble("call outer\nhalt\nouter: nop\ncall inner\nret\ninner: nop\nret")
+    assert any("one level deep" in w for w in nested.warnings), nested.warnings
+    flat = assemble("call a\ncall b\nhalt\na: nop\nret\nb: nop\nret")
+    assert not flat.warnings, flat.warnings
+    assert any("diff does nothing" in w for w in assemble("code diff\nhalt").warnings)
+    assert not assemble("code nrzi, diff\nhalt").warnings
+
+
 def test_errors_are_rejected():
     for bad in ("set 16, 1", "mode 4, bogus", "jmp nowhere", "outb 4, later\nnop\nlater: nop", "ldi r9, 1",
                 "dly 5000", "bogus 1", "tset 8192", "set 4, 1 side=2"):
