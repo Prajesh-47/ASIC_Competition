@@ -561,7 +561,7 @@ class Splice:
         elif op == "LANES":
             c.lanes = 1 << f["w"]
         elif op == "LDP":  # a program word as data, at the address in Rs. The read takes a second slot
-            c.ldp = (f["d"], c.R[f["s"]] & 0xFF)
+            c.ldp = (f["d"], c.R[f["s"]] & 0x1FF)
             dly = 1
         elif op == "JMPR":
             next_pc = self.read(c, f["s"]) & 0x1FF

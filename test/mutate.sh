@@ -1,6 +1,7 @@
 #!/bin/bash
 # Mutation check: deliberately break the RTL, and confirm the tests notice. Run from test/.
-# A mutant that survives points at a gap in the tests. ONLY=regex runs a subset. MAKE_ARGS is passed to
+# A mutant that survives points at a gap in the tests. ONLY=regex runs a subset, SHARD=k/n one of n
+# interleaved shares (run each share from its own copy of the tree, since sim_build is shared). MAKE_ARGS is passed to
 # make, for example MAKE_ARGS=COCOTB_TEST_MODULES=test to run one module.
 SRC=$(cd ../src && pwd)
 OUT=${1:-mutation_results.txt}
@@ -8,6 +9,11 @@ OUT=${1:-mutation_results.txt}
 run() {
   name=$1; file=$2; from=$3; to=$4
   if [ -n "$ONLY" ] && ! [[ "$name" =~ $ONLY ]]; then return; fi
+  # SHARD=k/n runs every n-th mutant from the k-th (0-based), so n copies of the tree can run side by side
+  if [ -n "$SHARD" ]; then
+    idx=$((${idx:--1} + 1))
+    (( idx % ${SHARD#*/} == ${SHARD%/*} )) || return
+  fi
   dir=$(mktemp -d)
   cp "$SRC"/*.v "$dir"/
   if ! python3 - "$dir/$file" "$from" "$to" <<'PY'
@@ -161,7 +167,8 @@ run "code: diff drives the same value" $E "eng_nx[ln_pair] = !tx_line;" "eng_nx[
 run "code: Manchester halves equal" $E "wire        tx_line  = cd_man[c] ? (half[c] ? !man_first : man_first)" "wire        tx_line  = cd_man[c] ? man_first"
 run "code: sync re-phases a whole period" $E "tcnt[i] <= resync[i] ? {2'd0, tp[i][15:1]}" "tcnt[i] <= resync[i] ? {1'b0, tp[i]}"
 run "code: stuff error not flagged" $E "if (rx_stuff_err) f[c] <= 1'b1;" ";"
-run "code: CRC sees stuff bits" $E "if ((is_out || is_outb) && !rep) lastb[c] <= grp_out;" "if (is_out || is_outb) lastb[c] <= grp_out;"
-run "code: run never saturates" $E "wire [2:0]  run_inc  = run[c] == 3'd7 ? 3'd7 : run[c] + 3'd1;" "wire [2:0]  run_inc  = run[c] + 3'd1;"
+# Not mutants: two equivalent changes found 2026-11-11. Dropping !rep from lastb can't be seen, since a repeat
+# re-runs the same instruction next, which rewrites lastb before any CRC can read it. And the run counter only
+# matters with stuffing on, where it resets at n <= 7, so its saturation at 7 is never reached
 rm -rf sim_build results.xml
 echo done | tee -a "$OUT"

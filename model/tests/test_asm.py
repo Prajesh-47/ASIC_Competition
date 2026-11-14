@@ -159,6 +159,12 @@ def test_ldp_reads_a_table_and_jmpr_jumps_to_a_register():
     assert m.e2h == [0xBEEF]
 
 
+def test_ldp_reaches_the_whole_512_word_memory():
+    # The address is 9 bits, as in the RTL. The model once kept 8, so a table past word 255 read word addr-256
+    m = _run("ldi r1, tab\nldp r2, r1\nmov sr, r2\npush\nhalt\n" + ".word 0\n" * 300 + "tab: .word 0xCAFE", 30)
+    assert m.e2h == [0xCAFE]
+
+
 def test_errors_are_rejected():
     for bad in ("set 16, 1", "mode 4, bogus", "jmp nowhere", "outb 4, later\nnop\nlater: nop", "ldi r9, 1",
                 "dly 5000", "bogus 1", "tset 8192", "set 4, 1 side=2"):

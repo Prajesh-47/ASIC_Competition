@@ -56,6 +56,12 @@ real test gaps. They were fixed, as listed below, and rerunning them confirmed b
 mutants added since. A full rerun of all 45 on the rewritten engine (branch `exp/timing-rtl`) then caught every
 one, 2 of them because they made a test run forever, which `mutate.sh` now counts as caught after 20 minutes.
 
+On v2 (branch `exp/v2` at 501eb31, 2026-11-11) the full list ran again, in four shards from four clean copies:
+106 mutants, 104 caught. The 2 survivors were both in the line coder and both proved equivalent, meaning no pin
+can tell the mutant from the original, so they were removed from the list with a note in `mutate.sh` saying why.
+`mutate.sh` used to count a mutant whose run produced no results file as caught; it now reports it separately,
+after that hid one fully invalid run (which nothing in these docs relied on).
+
 ## What the checks found
 
 Real problems, and which check found them. This is the best evidence that the checks work.
