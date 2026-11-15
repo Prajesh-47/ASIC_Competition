@@ -65,6 +65,13 @@ project's own rules. Trial 3 closes the gap:
   or a model given only the competition's public description.
 - It records time to first working frame per protocol, since "how hard was it" is the question a judge has.
 
+**The picks are already made, and sealed.** On 2026-11-15 a different model (Claude Opus), given only the
+competition's public description and the list of protocols already done, and told not to open any project
+file, wrote five protocols and three alternates to a file outside this repository. Nobody working on the chip
+has read it. Its SHA-256 is `25aac0e1b4306804c6071d3123f2878f1ef48e2163ac6ee1cfd35837f0a9f201`. The file is
+opened, and added to the repository unchanged, only after the freeze tag exists, so the last feature round
+can't be tuned to it.
+
 ## v2.1: the last feature round
 
 From trial 2's ranked gaps (`lab/explore/trial2.md`). Each is one branch, measured on the trial firmware it
