@@ -356,15 +356,18 @@ module tt_um_prajesh47_splice (
   // Boot store: the first BOOT_WORDS program words also live in flops. The program SRAM has no silicon
   // result on this process, and without a program nothing else on the chip can run. Every host write to
   // a low address lands in both, and register 23 bit 1 picks which one the engine and the host read. In
-  // boot mode the address wraps at BOOT_WORDS. It reads like the macro: registered, one cycle after the
-  // address, and it holds its output when not read.
+  // boot mode the address wraps at BOOT_WORDS. It reads like the macro: one cycle after the address.
   localparam BOOT_LOG2 = 6;
   reg  [15:0] boot_mem [0:(1 << BOOT_LOG2) - 1];
-  reg  [15:0] boot_q;
+  // The address is what's registered, not the word: the read mux then sits after the flop, where it has
+  // the time the macro's read takes anyway. Registering the word put the 64-way mux after the next fetch
+  // address, the end of the chip's longest path, and that build missed setup (gds 43724248165).
+  reg  [BOOT_LOG2-1:0] boot_addr;
+  wire [15:0] boot_q = boot_mem[boot_addr];
   wire [8:0]  prog_addr = running ? fetch_addr : mem_addr;
   always @(posedge clk) begin
     if (host_prog && mem_we && mem_addr[8:BOOT_LOG2] == 0) boot_mem[mem_addr[BOOT_LOG2-1:0]] <= mem_wdata;
-    if (running || (host_prog && !mem_we)) boot_q <= boot_mem[prog_addr[BOOT_LOG2-1:0]];
+    if (running || (host_prog && !mem_we)) boot_addr <= prog_addr[BOOT_LOG2-1:0];
   end
   assign prog_dout = boot_sel ? boot_q : sram_dout;
 
