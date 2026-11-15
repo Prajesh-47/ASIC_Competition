@@ -167,9 +167,10 @@ run "code: diff drives the same value" $E "eng_nx[ln_pair] = !tx_line;" "eng_nx[
 run "code: Manchester halves equal" $E ": (half[c] ? !man_first : man_first))" ": man_first)"
 run "code: sync re-phases a whole period" $E "tcnt[i] <= resync[i] ? {2'd0, tp[i][15:1]}" "tcnt[i] <= resync[i] ? {1'b0, tp[i]}"
 run "code: stuff error not flagged" $E ": stuff_due && rx_bit != stuff_bit);" ": 1'b0);"
-# Not mutants: two equivalent changes found 2026-11-11. Dropping !rep from lastb can't be seen, since a repeat
-# re-runs the same instruction next, which rewrites lastb before any CRC can read it. And the run counter only
-# matters with stuffing on, where it resets at n <= 7, so its saturation at 7 is never reached
+run "code: CRC sees stuff bits" $E "if ((is_out || is_outb) && !rep) lastb[c] <= grp_out;" "if (is_out || is_outb) lastb[c] <= grp_out;"
+# Not a mutant: the run counter saturating at 7. It only matters with stuffing on, where it resets at
+# n <= 7, so the saturation is never reached. ("CRC sees stuff bits" looked equivalent too on v2, but the
+# Manchester receive tests catch it, so it's back.)
 # Manchester and biphase receive, biphase transmit (explore/isa-code-rx)
 run "code: Manchester receive takes the first half" $E "(cd_pol[c] ? rxp[c] : rx_raw)" "(cd_pol[c] ? rx_raw : rxp[c])"
 run "code: biphase receive inverted" $E "? rx_same == cd_pol[c] :" "? rx_same != cd_pol[c] :"

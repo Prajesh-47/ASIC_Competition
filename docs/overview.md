@@ -205,7 +205,7 @@ by someone else, will run on the frozen chip.
 ## What's been shown, and what hasn't
 
 **Passing in the real chip-build flow:** build, DRC, LVS, precheck, and the full test suite at gate level. The
-slow corner passes at 50 MHz with 3.16 ns to spare, with no setup or hold violations.
+slow corner passes at 50 MHz with 1.44 ns to spare, and the worst hold slack is 0.12 ns (gds run 43600548235).
 
 **Passing in simulation, with idealised electricals:**
 - UART, SPI and I2C, as controller and target.
@@ -213,8 +213,8 @@ slow corner passes at 50 MHz with 3.16 ns to spare, with no setup or hold violat
 - WS2812 and 1-Wire.
 - CAN and low-speed USB, both directions, with clock recovery.
 - I2C pass-through, forcing a NACK, and bit flips inside live UART.
-- Two protocols at once.
-- The 9 trial protocols.
+- Up to four protocols at once, and one protocol feeding another through a link.
+- The 13 protocols of the two blind trials.
 
 **Not shown:**
 - **Hardware:** anything on a real chip or board.
@@ -224,13 +224,14 @@ slow corner passes at 50 MHz with 3.16 ns to spare, with no setup or hold violat
 ## The biggest risks
 
 1. **Nothing is proven on silicon.** CMOS5L has no chips back yet, so there are no measured pad numbers.
-2. **The host link.** The trial showed it's the main limit on sustained traffic, and the planned board host is
-   too slow for it.
-3. **Electrical rule violations remain.** Setup margin is now 3.16 ns at the slow corner, but the build still has
-   30 slow edges (slew), 15 overloaded nets (capacitance) and 75 fanout violations to clear before signoff. CI
-   also doesn't fail a build that misses timing: one variant missed setup by 0.57 ns and still showed green.
-4. **ISA changes cost area and timing.** Every gap the trial found has a fix, but each fix adds logic.
-5. **Time.** This is a solo entry, with about 10 weeks left.
+2. **The program lives in an SRAM macro with no silicon result on this process.** If the macro fails, so does
+   the chip. A small fallback store is a candidate experiment ([`roadmap.md`](roadmap.md)).
+3. **Timing margin.** Setup has 1.44 ns to spare at the slow corner and hold 0.12 ns. Hold is the one a slower
+   clock can't fix, so it's the number to raise before the freeze. Four fanout violations remain; slew and
+   capacitance are clean.
+4. **The host on the demo board** bit-bangs SPI and hasn't run on hardware. The 4-bit host mode and `XFER`
+   cut what it has to do, but only in simulation so far.
+5. **Time.** This is a solo entry, with nine weeks left and a feature freeze on 2026-11-29 to protect them.
 
 ## What comes next
 
