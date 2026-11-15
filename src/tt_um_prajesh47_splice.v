@@ -114,6 +114,7 @@ module tt_um_prajesh47_splice (
   reg [8:0] ctx2_pc, ctx3_pc;
   reg [7:0] pull_sel, push_sel;
   reg       host_quad;     // register 23: quad host mode
+  reg       boot_sel;      // register 23 bit 1: run from the flop boot store, not the program SRAM
   reg [7:0] odrain, fast, holdoff;
   reg [8:0] ctx1_pc;
   reg [15:0] cap_watch, cap_prescale;
@@ -131,6 +132,7 @@ module tt_um_prajesh47_splice (
       pull_sel <= 8'd0;
       push_sel <= 8'd0;
       host_quad <= 1'b0;
+      boot_sel <= 1'b0;
       odrain <= 8'd0;
       fast <= 8'd0;
       holdoff <= 8'd64;
@@ -160,7 +162,7 @@ module tt_um_prajesh47_splice (
         5'd19: ctx3_pc[7:0] <= reg_wdata;
         5'd20: pull_sel <= reg_wdata;
         5'd21: push_sel <= reg_wdata;
-        5'd23: host_quad <= reg_wdata[0];
+        5'd23: begin host_quad <= reg_wdata[0]; boot_sel <= reg_wdata[1]; end
         default: ;
       endcase
     end
@@ -189,7 +191,7 @@ module tt_um_prajesh47_splice (
       5'd20: reg_rdata = pull_sel;
       5'd21: reg_rdata = push_sel;
       5'd22: reg_rdata = {l1_full, l1_empty, l0_full, l0_empty, halted_all};
-      5'd23: reg_rdata = {7'd0, host_quad};
+      5'd23: reg_rdata = {6'd0, boot_sel, host_quad};
       default: reg_rdata = 8'd0;
     endcase
   end
@@ -349,6 +351,22 @@ module tt_um_prajesh47_splice (
   wire host_cap  = !cap_active && !cap_we && mem_req && mem_cap;
 
   wire [15:0] cap_dout;
+  wire [15:0] sram_dout;
+
+  // Boot store: the first BOOT_WORDS program words also live in flops. The program SRAM has no silicon
+  // result on this process, and without a program nothing else on the chip can run. Every host write to
+  // a low address lands in both, and register 23 bit 1 picks which one the engine and the host read. In
+  // boot mode the address wraps at BOOT_WORDS. It reads like the macro: registered, one cycle after the
+  // address, and it holds its output when not read.
+  localparam BOOT_LOG2 = 6;
+  reg  [15:0] boot_mem [0:(1 << BOOT_LOG2) - 1];
+  reg  [15:0] boot_q;
+  wire [8:0]  prog_addr = running ? fetch_addr : mem_addr;
+  always @(posedge clk) begin
+    if (host_prog && mem_we && mem_addr[8:BOOT_LOG2] == 0) boot_mem[mem_addr[BOOT_LOG2-1:0]] <= mem_wdata;
+    if (running || (host_prog && !mem_we)) boot_q <= boot_mem[prog_addr[BOOT_LOG2-1:0]];
+  end
+  assign prog_dout = boot_sel ? boot_q : sram_dout;
 
   // Program memory is the same 512-word macro as capture, so several large protocols stay loaded at
   // once and each context can start any of them.
@@ -357,10 +375,10 @@ module tt_um_prajesh47_splice (
       .A_MEN      (running || host_prog),
       .A_WEN      (host_prog && mem_we),
       .A_REN      (running || (host_prog && !mem_we)),
-      .A_ADDR     (running ? fetch_addr : mem_addr),
+      .A_ADDR     (prog_addr),
       .A_DIN      (mem_wdata),
       .A_DLY      (1'b1),
-      .A_DOUT     (prog_dout),
+      .A_DOUT     (sram_dout),
       .A_BM       (16'hFFFF),
       .A_BIST_CLK (1'b0),
       .A_BIST_EN  (1'b0),

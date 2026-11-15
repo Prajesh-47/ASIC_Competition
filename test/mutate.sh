@@ -179,5 +179,10 @@ run "code: biphase checked on the second half" $E "rx_same && (cd_nrzi[c] ? !hal
 run "code: biphase transmit has no change at a bit's start" $E "(half[c] ? tx_cur ^ tx_b ^ cd_pol[c] : !tx_cur)" "(half[c] ? tx_cur ^ tx_b ^ cd_pol[c] : tx_cur)"
 run "code: biphase-space sent as mark" $E "tx_cur ^ tx_b ^ cd_pol[c]" "tx_cur ^ tx_b"
 run "code: receive doesn't step the half-bit" $E "if ((code_tx || code_rx) && cd_man[c]) half[c] <= !half[c];" "if (code_tx && cd_man[c]) half[c] <= !half[c];"
+# The boot store (register 23 bit 1)
+run "boot: the select is ignored" $T "assign prog_dout = boot_sel ? boot_q : sram_dout;" "assign prog_dout = sram_dout;"
+run "boot: low words aren't mirrored" $T "if (host_prog && mem_we && mem_addr[8:BOOT_LOG2] == 0) boot_mem" "if (1'b0) boot_mem"
+run "boot: high writes land in the store" $T "if (host_prog && mem_we && mem_addr[8:BOOT_LOG2] == 0) boot_mem" "if (host_prog && mem_we) boot_mem"
+run "boot: register 23 bit 1 doesn't read back" $T "5'd23: reg_rdata = {6'd0, boot_sel, host_quad};" "5'd23: reg_rdata = {7'd0, host_quad};"
 rm -rf sim_build results.xml
 echo done | tee -a "$OUT"

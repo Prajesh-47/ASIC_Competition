@@ -65,10 +65,17 @@ class Splice:
     def ctx1_pc(self, value):
         self.ctx_pc[0] = value
 
+    BOOT_WORDS = 64  # the flop boot store: host register 23 bit 1 runs from it, wrapping at this size
+
     def __init__(self):
         self.prog = [0] * 512
+        self.boot = False
         self.coverage = {}
         self.reset()
+
+    @property
+    def prog_mask(self):
+        return self.BOOT_WORDS - 1 if self.boot else 0x1FF
 
     def cover(self, name):
         self.coverage[name] = self.coverage.get(name, 0) + 1
@@ -406,9 +413,9 @@ class Splice:
             c.stall -= 1
             if c.ldp:  # LDP's word arrives in the slot after it, in place of an instruction
                 d, addr = c.ldp
-                c.R[d], c.ldp = self.prog[addr], None
+                c.R[d], c.ldp = self.prog[addr & self.prog_mask], None
             return
-        op, f = decode(self.prog[c.pc & 0x1FF])  # 512-word program macro
+        op, f = decode(self.prog[c.pc & self.prog_mask])  # 512-word program macro, or the 64-word boot store
         if f.get("tick"):
             if not c.pending:
                 return
