@@ -199,18 +199,18 @@ def test_run_command_sends_and_receives_a_uart_byte(tmp_path=None):
         assert "$enddefinitions" in (tmp_path / "t.vcd").read_text()
 
 
-def test_boot_store_wraps_fetch_and_ldp_at_64_words():
-    # Host register 23 bit 1: the engine runs from the 64-word flop store, and addresses wrap there
+def test_boot_store_wraps_fetch_and_ldp_at_32_words():
+    # Host register 23 bit 1: the engine runs from the 32-word flop store, and addresses wrap there
     model = Splice()
     model.boot = True
-    model.load(assemble("ldi r1, 64 + 5\nldp r2, r1\nmov sr, r2\npush\nhalt\n.word 0xBEEF").words)
+    model.load(assemble("ldi r1, 32 + 5\nldp r2, r1\nmov sr, r2\npush\nhalt\n.word 0xBEEF").words)
     model.start()
     for _ in range(30):
         model.step()
     assert model.e2h == [0xBEEF]
     model = Splice()
     model.boot = True
-    model.load(assemble("mode 4, eng\nset 4, 1\nset 4, 0\n" + "nop\n" * 61).words)
+    model.load(assemble("mode 4, eng\nset 4, 1\nset 4, 0\n" + "nop\n" * 29).words)
     model.start()
     rises, was = [], 0
     for t in range(400):
@@ -218,7 +218,7 @@ def test_boot_store_wraps_fetch_and_ldp_at_64_words():
         if now and not was:
             rises.append(t)
         was = now
-    assert {b - a for a, b in zip(rises[1:], rises[2:])} == {64}, rises  # the first lap has the start cycle
+    assert {b - a for a, b in zip(rises[1:], rises[2:])} == {32}, rises  # the first lap has the start cycle
 
 
 def test_errors_are_rejected():

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: © 2026 Prajesh-47
 # SPDX-License-Identifier: Apache-2.0
 #
-# The boot store (host register 23 bit 1): the first 64 program words also live in flops, so the chip
+# The boot store (host register 23 bit 1): the first 32 program words also live in flops, so the chip
 # still runs short programs if the program SRAM macro doesn't work on silicon.
 
 import cocotb
@@ -10,7 +10,7 @@ from cocotb.handle import Force, Release
 from test import (GATE_LEVEL, assemble, capture, fifo_write, firmware, load_program, read_reg, reset, spi_xfer,
                   start, stop, uart_frames, write_reg)
 
-BOOT_WORDS = 64
+BOOT_WORDS = 32
 
 
 async def read_program(dut, base, count):
@@ -47,7 +47,7 @@ async def test_boot_store_runs_uart_with_the_sram_dead(dut):
 
 @cocotb.test()
 async def test_boot_store_mirrors_low_words_and_wraps(dut):
-    """Every write below word 64 lands in both memories. In boot mode addresses wrap at 64; out of it the
+    """Every write below word 32 lands in both memories. In boot mode addresses wrap at 32; out of it the
     SRAM still holds everything that was written."""
     await reset(dut)
     await stop(dut)
@@ -56,7 +56,7 @@ async def test_boot_store_mirrors_low_words_and_wraps(dut):
     assert await read_program(dut, 0, 100) == words
     await write_reg(dut, 23, 2)
     got = await read_program(dut, 0, 100)
-    assert got == [words[i % BOOT_WORDS] for i in range(100)], "boot store doesn't mirror words 0-63, or doesn't wrap"
+    assert got == [words[i % BOOT_WORDS] for i in range(100)], "boot store doesn't mirror words 0-31, or doesn't wrap"
     await load_program(dut, [0x1234], base=70)  # a write above the boot store must not land in it
     assert (await read_program(dut, 6, 1)) == [words[6]]
     await write_reg(dut, 23, 0)
@@ -64,9 +64,9 @@ async def test_boot_store_mirrors_low_words_and_wraps(dut):
 
 
 @cocotb.test()
-async def test_boot_store_program_counter_wraps_at_64_words(dut):
-    """A 64-word program that runs off its end starts again at word 0 in boot mode, so the line toggles
-    every 64 cycles. From the SRAM the same program runs on through 448 words of NOP first."""
+async def test_boot_store_program_counter_wraps_at_32_words(dut):
+    """A 32-word program that runs off its end starts again at word 0 in boot mode, so the line toggles
+    every 32 cycles. From the SRAM the same program runs on through 480 words of NOP first."""
     await reset(dut)
     prog = assemble("mode 4, eng\nset 4, 1\nset 4, 0\n" + "nop\n" * (BOOT_WORDS - 3))
     assert len(prog.words) == BOOT_WORDS

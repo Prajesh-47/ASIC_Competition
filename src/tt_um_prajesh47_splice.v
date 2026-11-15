@@ -357,17 +357,26 @@ module tt_um_prajesh47_splice (
   // result on this process, and without a program nothing else on the chip can run. Every host write to
   // a low address lands in both, and register 23 bit 1 picks which one the engine and the host read. In
   // boot mode the address wraps at BOOT_WORDS. It reads like the macro: one cycle after the address.
-  localparam BOOT_LOG2 = 6;
+  localparam BOOT_LOG2 = 5;
   reg  [15:0] boot_mem [0:(1 << BOOT_LOG2) - 1];
   // The address is what's registered, not the word: the read mux then sits after the flop, where it has
   // the time the macro's read takes anyway. Registering the word put the 64-way mux after the next fetch
   // address, the end of the chip's longest path, and that build missed setup (gds 43724248165).
-  reg  [BOOT_LOG2-1:0] boot_addr;
-  wire [15:0] boot_q = boot_mem[boot_addr];
+  // With 64 words that flop's fan-out to 16 read muxes was itself 5 ns of buffers at the slow corner and
+  // the build missed by 0.37 ns (gds 43729311802). So the store is 32 words, and each byte of the word has
+  // its own copy of the address register.
+  (* keep *) reg [BOOT_LOG2-1:0] boot_addr_lo;
+  (* keep *) reg [BOOT_LOG2-1:0] boot_addr_hi;
+  wire [15:0] boot_lo = boot_mem[boot_addr_lo];
+  wire [15:0] boot_hi = boot_mem[boot_addr_hi];
+  wire [15:0] boot_q  = {boot_hi[15:8], boot_lo[7:0]};
   wire [8:0]  prog_addr = running ? fetch_addr : mem_addr;
   always @(posedge clk) begin
     if (host_prog && mem_we && mem_addr[8:BOOT_LOG2] == 0) boot_mem[mem_addr[BOOT_LOG2-1:0]] <= mem_wdata;
-    if (running || (host_prog && !mem_we)) boot_addr <= prog_addr[BOOT_LOG2-1:0];
+    if (running || (host_prog && !mem_we)) begin
+      boot_addr_lo <= prog_addr[BOOT_LOG2-1:0];
+      boot_addr_hi <= prog_addr[BOOT_LOG2-1:0];
+    end
   end
   assign prog_dout = boot_sel ? boot_q : sram_dout;
 
