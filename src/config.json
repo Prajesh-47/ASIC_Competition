@@ -50,8 +50,9 @@
 
   "//": "Hold slack margin - Increase them in case you are getting hold violations.",
   "PL_RESIZER_HOLD_SLACK_MARGIN": 0.1,
-  "//": "0.2 ns after routing, from 0.05: hold is the one failure a slower clock can't fix. On v2 it lifted",
-  "//": "worst hold slack from 0.080 to 0.187 ns for 5.9% more cell area (gds 43062715114).",
+  "//": "0.3 ns after routing, from the template's 0.05: hold is the one failure a slower clock can't fix.",
+  "//": "Worst hold slack by margin: 0.05 gave 0.080 ns, 0.2 gave 0.124, 0.3 gives 0.297 (gds 43732018972),",
+  "//": "for 4% more cell area than 0.2. Raising the placement margin to 0.2 as well gave less: 0.255.",
   "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.3,
 
   "//": "RUN_LINTER, LINTER_INCLUDE_PDK_MODELS - Disabling the linter is not recommended!",

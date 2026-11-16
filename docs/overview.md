@@ -205,7 +205,7 @@ by someone else, will run on the frozen chip.
 ## What's been shown, and what hasn't
 
 **Passing in the real chip-build flow:** build, DRC, LVS, precheck, and the full test suite at gate level. The
-slow corner passes at 50 MHz with 1.44 ns to spare, and the worst hold slack is 0.12 ns (gds run 43600548235).
+slow corner passes at 50 MHz with 1.59 ns to spare, and the worst hold slack is 0.30 ns (gds run 43732018972).
 
 **Passing in simulation, with idealised electricals:**
 - UART, SPI and I2C, as controller and target.
@@ -226,9 +226,8 @@ slow corner passes at 50 MHz with 1.44 ns to spare, and the worst hold slack is 
 1. **Nothing is proven on silicon.** CMOS5L has no chips back yet, so there are no measured pad numbers.
 2. **The program lives in an SRAM macro with no silicon result on this process.** If the macro fails, so does
    the chip. A small fallback store is a candidate experiment ([`roadmap.md`](roadmap.md)).
-3. **Timing margin.** Setup has 1.44 ns to spare at the slow corner and hold 0.12 ns. Hold is the one a slower
-   clock can't fix, so it's the number to raise before the freeze. Four fanout violations remain; slew and
-   capacitance are clean.
+3. **Timing margin.** Setup has 1.59 ns to spare at the slow corner and hold 0.30 ns, both past their targets.
+   Four fanout violations remain; slew and capacitance are clean. Every new feature has to keep these.
 4. **The host on the demo board** bit-bangs SPI and hasn't run on hardware. The 4-bit host mode and `XFER`
    cut what it has to do, but only in simulation so far.
 5. **Time.** This is a solo entry, with nine weeks left and a feature freeze on 2026-11-29 to protect them.

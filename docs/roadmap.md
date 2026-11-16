@@ -16,7 +16,7 @@ The deadline is **2027-01-18**. That leaves nine weeks.
 | What's unique | Inline alteration of live traffic, the open-drain bridge with a proof, four contexts that feed each other | Strong. A scan of 22 public entries' READMEs found none describing inline alteration |
 | How it was designed and verified | Golden model compared every cycle, 100+ mutants, formal proofs with negative controls, gate-level tests in CI, a log of what AI wrote and how each piece was checked | Strong |
 | **The write-up** (weighted heavily) | The docs still describe the plan in places, and some pages said things that stopped being true weeks ago | **The weakest part.** Fixed in part on 2026-11-14; the full pass is scheduled below |
-| A chip worth fabricating | All checks pass. With the macros mirrored and hold repaired to 0.2 ns, slow-corner setup slack is 1.44 ns (from 0.27) and hold slack 0.12 ns (from 0.08), gds run 43600548235 | Better. Hold is still under the 0.15 ns target: one more flow experiment before the freeze |
+| A chip worth fabricating | All checks pass. With the macros mirrored and hold repaired to 0.3 ns after routing, slow-corner setup slack is 1.59 ns (from 0.27) and hold slack 0.30 ns (from 0.08), gds run 43732018972 | Good. Both are past their targets (1 ns and 0.15 ns) |
 
 ## Decisions reviewed
 
