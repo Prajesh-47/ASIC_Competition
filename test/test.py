@@ -845,7 +845,7 @@ async def test_contexts_keep_their_own_crc_polynomial(dut):
 
 
 # ------------------------------------------------------------------ RTL against the golden model
-MODEL_ONLY = set()  # explore/isa-lanes-table: instructions in the model but not yet in RTL
+MODEL_ONLY = set()  # instructions in the model but not yet in RTL
 PARK_LINE = 11  # AUX_IN3: every random program waits for this line before doing anything else
 MASK_UO = 0xFE  # uo[0] is the host's MISO, which the model doesn't include
 COVERAGE = {}
@@ -916,7 +916,8 @@ def random_program(rng, length, ctx1):
             words.append(park)
             continue
         if rng.random() < 0.02:  # reserved encodings must behave as NOP
-            words.append(rng.choice([0xC800, 0xCC00, 0xA800, 0xB000, 0xE5C0, 0xF000, 0xF7FF, 0xFFFF]))
+            # 0xF000 left this list when it became CMPK; 0xF100 is the next code up and still free
+            words.append(rng.choice([0xC800, 0xCC00, 0xA800, 0xB000, 0xE5C0, 0xF100, 0xF7FF, 0xFFFF]))
             continue
         op = rng.choice(choices)
         chance = rng.random()
@@ -975,6 +976,22 @@ def random_program(rng, length, ctx1):
                 op, fields = "NOP", {"tick": 0, "side": 0}
             else:
                 words.append(encode("LDI", r=r, hl=0, v=rng.randrange(1, length - 1)))
+        if op == "CMPK":
+            # Its constant is the next word. Keep it off a start address and the closing JMP, and half the
+            # time load the register first and compare it with a constant 1 below, equal or 1 above, or the
+            # equal bin would almost never be hit by a 16-bit random constant
+            if starts & {pc + 1, pc + 2} or pc + 2 >= length - 1:
+                op, fields = "NOP", {"tick": 0, "side": 0}
+            elif rng.random() < 0.5:
+                words.append(encode(op, **fields))
+                words.append(rng.getrandbits(16))
+                continue
+            elif pc + 3 < length - 1 and not starts & {pc + 3}:
+                r, v = rng.randrange(4), rng.randrange(256)
+                words += [encode("LDI", r=r, hl=0, v=v), encode("CMPK", a=r), (v + rng.choice([-1, 0, 1])) & 0xFFFF]
+                continue
+            else:
+                op, fields = "NOP", {"tick": 0, "side": 0}
         words.append(encode(op, **fields))
     words.append(encode("JMP", c=COND["AL"], to=1))
     return words
@@ -1199,6 +1216,8 @@ async def test_differential_covered_every_instruction(dut):
     bins += ["CODE.man", "CODE.stuff.tx", "CODE.nrzi.tx", "CODE.data.tx", "CODE.stuff.rx", "CODE.nrzi.rx",
              "CODE.data.rx", "CODE.stufferr", "CODE.sync"]
     bins += ["CODE.bmc", "CODE.man.rx.h1", "CODE.man.rx.h2", "CODE.bmc.rx.h1", "CODE.bmc.rx.h2", "CODE.codeerr"]
+    # v2.1: each outcome of CMPK and SUB
+    bins += ["CMPK.lt", "CMPK.eq", "CMPK.gt", "SUB.borrow", "SUB.zero", "SUB.pos"]
     missing = sorted(b for b in bins if b not in COVERAGE)
     dut._log.info(f"coverage: {len(bins) - len(missing)}/{len(bins)} bins, {sum(COVERAGE.values())} events")
     if GATE_LEVEL:  # far fewer runs at gate level, so this is only reported

@@ -36,6 +36,7 @@ class Context:
         self.poly = 0
         self.lastb = 0  # the bit (lane group) most recently shifted by OUT, OUTB, IN or INB, for CRC
         self.ldp = None  # LDP waiting for its word: (register, address)
+        self.cmpk = None  # CMPK waiting for its constant, the next program word: (operand, address)
         self.lanes = 1  # LANES: how many lines one OUT, IN, OUTB or INB moves, 1, 2, 4 or 8
         self.last = [1] * 12
         # CODE, the line coder (v2): config, then the run of data bits, Manchester's half, NRZI receive level
@@ -407,6 +408,12 @@ class Splice:
             if c.ldp:  # LDP's word arrives in the slot after it, in place of an instruction
                 d, addr = c.ldp
                 c.R[d], c.ldp = self.prog[addr], None
+            if c.cmpk:  # CMPK's constant arrives the same way, and the PC steps past it
+                a, addr = c.cmpk
+                v, k = self.read(c, a), self.prog[addr]
+                c.Z, c.F = int(v == k), int(v < k)
+                c.pc, c.cmpk = (addr + 1) & 0x1FF, None
+                self.cover("CMPK.eq" if v == k else "CMPK.lt" if v < k else "CMPK.gt")
             return
         op, f = decode(self.prog[c.pc & 0x1FF])  # 512-word program macro
         if f.get("tick"):
@@ -597,6 +604,13 @@ class Splice:
         elif op == "CMPU":  # unsigned: Z if equal, F if a < b
             a, b = self.read(c, f["a"]), self.read(c, f["b"])
             c.Z, c.F = int(a == b), int(a < b)
+        elif op == "CMPK":  # CMPU against the next program word, read in a second slot. Z and F as CMPU
+            c.cmpk = (f["a"], next_pc)
+            dly = 1
+        elif op == "SUB":  # F is the borrow: set if d < s, unsigned, as after CMPU d, s
+            a, b = c.R[f["d"]], self.read(c, f["s"])
+            c.R[f["d"]], c.Z, c.F = (a - b) & MASK, int(a == b), int(a < b)
+            self.cover("SUB.borrow" if a < b else "SUB.zero" if a == b else "SUB.pos")
         elif op == "TCAP":  # with .t: wait for a tick, then read the interval that ended at it
             c.R[f["r"]] = c.tint
         elif op == "CMPI":

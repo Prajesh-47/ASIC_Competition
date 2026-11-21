@@ -62,6 +62,10 @@ TABLE = {
     "LDP": ("11101101", (("d", 2), ("s", 2))),
     "JMPR": ("11101110", (("s", 3),)),
     "LANES": ("11101111", (("w", 2),)),
+    # v2.1, from trial 2's top gap (lab/explore/trial2.md): a subtract with a borrow, in ROUTE's old code, and
+    # an unsigned compare against a 16-bit constant in the next program word, which takes a second slot
+    "SUB": ("11101100", (("d", 2), ("s", 3))),
+    "CMPK": ("11110000", (("a", 3),)),
     "RAND": ("1110010100", (("r", 2),)),
     "SHL": ("1110010101", (("r", 2),)),
     "SHR": ("1110010110", (("r", 2),)),
