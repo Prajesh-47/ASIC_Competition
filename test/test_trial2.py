@@ -12,7 +12,7 @@ from cocotb.utils import get_sim_time
 
 import os
 
-from test import HERE, assemble, capture, fifo_xfer, firmware, levels, load_program, reset, start, stop, write_reg
+from test import assemble, capture, fifo_xfer, firmware, firmware_path, levels, load_program, reset, start, stop, write_reg
 
 CYCLE_NS = 20
 
@@ -25,7 +25,7 @@ def pad(out, oe, line, idle=1):
 def combined(first, second, **defines):
     """Two programs in one image: the second starts context 1. Their labels must not clash."""
     def source(name):
-        with open(os.path.join(HERE, "..", "model", "firmware", name), encoding="utf-8") as f:
+        with open(firmware_path(name), encoding="utf-8") as f:
             return f.read()
     text = source(first) + "\n.ctx1 second_start\nsecond_start:\n" + source(second)
     return assemble(text, defines)

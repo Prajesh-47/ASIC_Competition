@@ -182,6 +182,7 @@ module splice_engine #(parameter NCTX = 4) (
   wire is_lanes  = ins[15:8] == 8'b11101111;
   wire is_sub    = ins[15:8] == 8'b11101100;
   wire is_cmpk   = ins[15:8] == 8'b11110000;
+  wire is_cmpui  = ins[15:11] == 5'b11111;
   wire is_rand   = ins[15:6] == 10'b1110010100;
   wire is_shl    = ins[15:6] == 10'b1110010101;
   wire is_shr    = ins[15:6] == 10'b1110010110;
@@ -431,6 +432,9 @@ module splice_engine #(parameter NCTX = 4) (
   wire [15:0] alu_addr = alu_as[15:0];
   // CMPK's second slot: its operand against the constant, which arrives as read data
   wire [15:0] kval = operand(ksrc[c], r0_c, r1_c, r2_c, r3_c, sr_c, bc_c, to_c);
+  // CMPUI: r0-r3 against the 9-bit constant in the instruction
+  wire [15:0] ui_reg = rr[{c, ins[10:9]}];
+  wire [15:0] ui_k   = {7'd0, ins[8:0]};
   // CRC step on the last shifted bit: left with a left-aligned polynomial, or right with a reflected one
   // CRC r, dir, lane: one step on bit `lane` of the last group. CRCW (ins[4]): one lane's bits in SR, oldest
   // first, 4 steps at stride 4, or 2 at stride 8 with 8 lanes.
@@ -487,14 +491,14 @@ module splice_engine #(parameter NCTX = 4) (
                     | ({16{mov_rr}} & mov_val)
                     | ({16{is_tcap}} & tint_now);
 
-  wire z_we = is_add || is_addr || is_sub || is_crc || is_xor || is_and || is_cmp || is_cmpu || is_cmpi || is_tstb || is_probe;
+  wire z_we = is_add || is_addr || is_sub || is_crc || is_xor || is_and || is_cmp || is_cmpu || is_cmpi || is_cmpui || is_tstb || is_probe;
   wire z_wd = (is_add && alu_add == 0) || ((is_addr || is_sub) && alu_addr == 0) || (is_crc && alu_crc == 0) || (is_xor && alu_xor == 0) || (is_and && alu_and == 0)
            || ((is_cmp || is_cmpu) && opnd_cmp == opnd_mov) || (is_cmpi && add_reg == {8'd0, ins[7:0]})
-           || (is_tstb && sbit) || (is_probe && lines[ln_p]);
+           || (is_cmpui && ui_reg == ui_k) || (is_tstb && sbit) || (is_probe && lines[ln_p]);
 
-  wire f_we = is_pull || (is_push && out_full) || is_shift || is_cmpu || is_sub;
+  wire f_we = is_pull || (is_push && out_full) || is_shift || is_cmpu || is_sub || is_cmpui;
   wire f_wd = (is_pull && in_empty) || is_push || (is_shr && sft_reg[0]) || (is_shl && sft_reg[15])
-           || (is_cmpu && opnd_cmp < opnd_mov) || (is_sub && !alu_as[16]);
+           || (is_cmpu && opnd_cmp < opnd_mov) || (is_sub && !alu_as[16]) || (is_cmpui && ui_reg < ui_k);
 
   wire sr_out = ((is_out && !ins[6]) || is_outb) && !rep;
   wire sr_in = (is_in || is_inb) && !rep;

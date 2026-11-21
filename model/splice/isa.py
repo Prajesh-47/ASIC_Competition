@@ -66,6 +66,8 @@ TABLE = {
     # an unsigned compare against a 16-bit constant in the next program word, which takes a second slot
     "SUB": ("11101100", (("d", 2), ("s", 3))),
     "CMPK": ("11110000", (("a", 3),)),
+    # and the one-word form for constants up to 511, which is most range checks in trial 2
+    "CMPUI": ("11111", (("a", 2), ("v", 9))),
     "RAND": ("1110010100", (("r", 2),)),
     "SHL": ("1110010101", (("r", 2),)),
     "SHR": ("1110010110", (("r", 2),)),

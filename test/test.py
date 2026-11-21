@@ -27,8 +27,17 @@ HALF = 5  # SPI half period in core clocks: SCK is core/10
 UI_IDLE = 0xF4  # AUX_IN high, CS high, SCK and MOSI low
 
 
+def firmware_path(name):
+    """SPLICE_FW=v21 runs the same tests on model/firmware/v21/<name> where that copy exists, for measuring
+    an ISA change on trial firmware without touching the trial's own files."""
+    variant = os.path.join(HERE, "..", "model", "firmware", os.environ.get("SPLICE_FW", ""), name)
+    if os.environ.get("SPLICE_FW") and os.path.exists(variant):
+        return variant
+    return os.path.join(HERE, "..", "model", "firmware", name)
+
+
 def firmware(name, **defines):
-    with open(os.path.join(HERE, "..", "model", "firmware", name), encoding="utf-8") as source:
+    with open(firmware_path(name), encoding="utf-8") as source:
         return assemble(source.read(), defines)
 
 
@@ -916,8 +925,8 @@ def random_program(rng, length, ctx1):
             words.append(park)
             continue
         if rng.random() < 0.02:  # reserved encodings must behave as NOP
-            # 0xF000 left this list when it became CMPK; 0xF100 is the next code up and still free
-            words.append(rng.choice([0xC800, 0xCC00, 0xA800, 0xB000, 0xE5C0, 0xF100, 0xF7FF, 0xFFFF]))
+            # 0xF000 and 0xFFFF left this list when they became CMPK and CMPUI; 0xF100 and 0xF3FF are still free
+            words.append(rng.choice([0xC800, 0xCC00, 0xA800, 0xB000, 0xE5C0, 0xF100, 0xF7FF, 0xF3FF]))
             continue
         op = rng.choice(choices)
         chance = rng.random()
@@ -976,6 +985,11 @@ def random_program(rng, length, ctx1):
                 op, fields = "NOP", {"tick": 0, "side": 0}
             else:
                 words.append(encode("LDI", r=r, hl=0, v=rng.randrange(1, length - 1)))
+        if op == "CMPUI" and rng.random() < 0.5 and pc + 1 not in starts and pc + 1 < length - 1:
+            # As for CMPK: a random 9-bit constant is seldom equal to the register, so set one up
+            r, v = rng.randrange(4), rng.randrange(1, 256)
+            words += [encode("LDI", r=r, hl=0, v=v), encode("CMPUI", a=r, v=v + rng.choice([-1, 0, 1]))]
+            continue
         if op == "CMPK":
             # Its constant is the next word. Keep it off a start address and the closing JMP, and half the
             # time load the register first and compare it with a constant 1 below, equal or 1 above, or the
@@ -1217,7 +1231,7 @@ async def test_differential_covered_every_instruction(dut):
              "CODE.data.rx", "CODE.stufferr", "CODE.sync"]
     bins += ["CODE.bmc", "CODE.man.rx.h1", "CODE.man.rx.h2", "CODE.bmc.rx.h1", "CODE.bmc.rx.h2", "CODE.codeerr"]
     # v2.1: each outcome of CMPK and SUB
-    bins += ["CMPK.lt", "CMPK.eq", "CMPK.gt", "SUB.borrow", "SUB.zero", "SUB.pos"]
+    bins += ["CMPK.lt", "CMPK.eq", "CMPK.gt", "CMPUI.lt", "CMPUI.eq", "CMPUI.gt", "SUB.borrow", "SUB.zero", "SUB.pos"]
     missing = sorted(b for b in bins if b not in COVERAGE)
     dut._log.info(f"coverage: {len(bins) - len(missing)}/{len(bins)} bins, {sum(COVERAGE.values())} events")
     if GATE_LEVEL:  # far fewer runs at gate level, so this is only reported

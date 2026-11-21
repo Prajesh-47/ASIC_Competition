@@ -9,7 +9,7 @@
     wait   0, fall
     jmp    bcn, label             ; or: jmp label
     ldi    r0, 0x1234             ; pseudo: two words if the value needs them
-    cmpu   r0, 400                ; a constant makes it CMPK: two words, two slots
+    cmpu   r0, 400                ; a constant: CMPUI (one word) up to 511, else CMPK (two words, two slots)
     delay  1000                   ; pseudo: spend exactly this many cycles
     .equ   BIT, 434
     .ctx1  label                  ; where context 1 starts; .ctx2 and .ctx3 likewise
@@ -222,11 +222,16 @@ def _translate(mnemonic, args, flags, named, names, labels, pc, final):
         return [(op, {"d": reg(args[0]), "s": key(OPERAND, args[1])})]
     if op == "MOV":
         return [(op, {"d": key(OPERAND, args[0]), "s": key(OPERAND, args[1])})]
-    # A constant picks the constant form: "cmpu r0, 400" is CMPK, two words with the constant second
+    # A constant picks a constant form: "cmpu r0, 400" is CMPUI, one word, when the operand is r0-r3 and the
+    # constant fits 9 bits; otherwise CMPK, two words with the constant second
+    if op == "CMPUI":
+        return [(op, {"a": reg(args[0]), "v": num(args[1])})]
     if op == "CMPK" or (op == "CMPU" and args[1].upper() not in OPERAND):
         value = num(args[1])
         if not 0 <= value <= 0xFFFF:
             raise AsmError(f"cmpk constant {value} out of range")
+        if op == "CMPU" and value < 512 and re.fullmatch(r"[rR][0-3]", args[0]):
+            return [("CMPUI", {"a": reg(args[0]), "v": value})]
         return [("CMPK", {"a": key(OPERAND, args[0])}), ("WORD", {"v": value})]
     if op in ("CMP", "CMPU"):
         return [(op, {"a": key(OPERAND, args[0]), "b": key(OPERAND, args[1])})]

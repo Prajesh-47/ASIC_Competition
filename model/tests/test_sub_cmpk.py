@@ -45,7 +45,7 @@ def test_labels_after_cmpk_count_its_constant():
 @pytest.mark.parametrize("v, k, z, f", [(5, 6, 0, 1), (6, 6, 1, 0), (7, 6, 0, 0),
                                         (0, 0, 1, 0), (0, 0xFFFF, 0, 1), (0xFFFF, 0, 0, 0), (0xFFFF, 0xFFFF, 1, 0)])
 def test_cmpk_is_unsigned_and_sets_z_and_f_like_cmpu(v, k, z, f):
-    m, _ = _run(f"ldi r1, {v}\ncmpu r1, {k}\nhalt", 12)
+    m, _ = _run(f"ldi r1, {v}\ncmpk r1, {k}\nhalt", 12)
     c = m.ctx[0]
     assert (c.Z, c.F) == (z, f)
     assert c.R == [0, v, 0, 0]  # no register is spent on the constant
@@ -83,7 +83,7 @@ def test_cmpk_wraps_past_the_last_word():
 
 
 def test_four_contexts_each_compare_against_their_own_constant():
-    src = "\n".join(f"c{k}: ldi r0, {100 * k}\ncmpu r0, {100 * k + 1 - k}\nhalt" for k in range(4))
+    src = "\n".join(f"c{k}: ldi r0, {100 * k}\ncmpk r0, {100 * k + 1 - k}\nhalt" for k in range(4))
     src += "\n.ctx1 c1\n.ctx2 c2\n.ctx3 c3"
     m, _ = _run(src, 40, nctx=4)
     # Context k compares 100k with 100k+1-k: less, equal, greater, greater
@@ -101,3 +101,25 @@ def test_sub_wraps_and_sets_z_and_the_borrow(a, b, z, f):
 def test_sub_takes_bc_and_sr_operands():
     m, _ = _run("bci 3\nldi r1, 10\nsub r1, bc\nsri 4\nsub r1, sr\nhalt", 12)
     assert m.ctx[0].R[1] == 3 and m.ctx[0].F == 0
+
+
+def test_cmpu_with_a_small_constant_is_one_word_cmpui():
+    assert assemble("cmpu r3, 511").words == [encode("CMPUI", a=3, v=511)]
+    assert assemble("cmpu r3, 512").words == [encode("CMPK", a=3), 512]  # too big: CMPK
+    assert assemble("cmpu sr, 5").words == [encode("CMPK", a=4), 5]  # not r0-r3: CMPK
+    assert assemble("cmpui r1, 7").words == [encode("CMPUI", a=1, v=7)]
+    with pytest.raises(AsmError):
+        assemble("cmpui r1, 512")
+
+
+@pytest.mark.parametrize("v, k, z, f", [(5, 6, 0, 1), (6, 6, 1, 0), (7, 6, 0, 0), (0, 0, 1, 0), (0, 511, 0, 1),
+                                        (0x8000, 1, 0, 0), (511, 511, 1, 0), (0xFFFF, 511, 0, 0)])
+def test_cmpui_is_unsigned_against_all_16_bits(v, k, z, f):
+    m, trace = _run(f"ldi r2, {v}\ncmpui r2, {k}\nhalt", 12)
+    assert (m.ctx[0].Z, m.ctx[0].F) == (z, f) and m.ctx[0].R[2] == v
+
+
+def test_cmpui_takes_one_slot():
+    _, with_cmpui = _run("cmpui r0, 3\nset 0, 0\nhalt", 8)
+    _, with_nop = _run("nop\nset 0, 0\nhalt", 8)
+    assert with_cmpui == with_nop

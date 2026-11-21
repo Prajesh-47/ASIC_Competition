@@ -607,6 +607,10 @@ class Splice:
         elif op == "CMPK":  # CMPU against the next program word, read in a second slot. Z and F as CMPU
             c.cmpk = (f["a"], next_pc)
             dly = 1
+        elif op == "CMPUI":  # CMPU against a 9-bit constant in the instruction
+            a, k = c.R[f["a"]], f["v"]
+            c.Z, c.F = int(a == k), int(a < k)
+            self.cover("CMPUI.eq" if a == k else "CMPUI.lt" if a < k else "CMPUI.gt")
         elif op == "SUB":  # F is the borrow: set if d < s, unsigned, as after CMPU d, s
             a, b = c.R[f["d"]], self.read(c, f["s"])
             c.R[f["d"]], c.Z, c.F = (a - b) & MASK, int(a == b), int(a < b)
