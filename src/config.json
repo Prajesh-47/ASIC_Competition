@@ -44,6 +44,10 @@
   "//": "on main (gds run 42515083991) were clkbuf_leaf_*. 7 leaves room for one dummy load per leaf.",
   "CTS_SINK_CLUSTERING_SIZE": 7,
 
+  "//": "Place and route read src/pnr.sdc: the template's constraints plus extra load on cap_sram/A_WEN, whose",
+  "//": "route the resizer underestimates. Signoff reads the template's alone.",
+  "PNR_SDC_FILE": "dir::pnr.sdc",
+
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
   "//": "The value is in nanoseconds, so 20ns == 50MHz.",
   "CLOCK_PERIOD": 20,
