@@ -45,7 +45,7 @@ PY
   rm -rf "$dir"
 }
 E=splice_engine.v; T=tt_um_prajesh47_splice.v; H=splice_host.v
-run "OUT always shifts (ignores ns)" $E "wire sr_out = (is_out && !ins[6]) || is_outb;" "wire sr_out = is_out || is_outb;"
+run "OUT always shifts (ignores ns)" $E "wire sr_out = ((is_out && !ins[6]) || is_outb) && !rep;" "wire sr_out = (is_out || is_outb) && !rep;"
 run "taken jump goes one word late" $E "wire [8:0] pc_taken = to_target ? ins[8:0]" "wire [8:0] pc_taken = to_target ? ins[8:0] + 9'd1"
 run "JMP BC!=0 tests BC==0" $E "3'd6: take_jmp = bc[c] != 0;" "3'd6: take_jmp = bc[c] == 0;"
 run "delay one cycle short" $E "(is_ldp || is_cmpk) ? 16'd1 : {12'd0, dly_field};" "(is_ldp || is_cmpk) ? 16'd1 : ({12'd0, dly_field} == 0 ? 16'd0 : {12'd0, dly_field} - 16'd1);"
@@ -58,8 +58,8 @@ run "TSETR keeps the old tick pending" $E "tcnt[c] <= {1'b0, opnd_cmp};
                 pending[c] <= 1'b0;" "tcnt[c] <= {1'b0, opnd_cmp};"
 run "CRC always shifts left" $E "wire        crc_dir  = ins[5];" "wire        crc_dir  = 1'b1;"
 run "CRC ignores the shifted bit" $E "ins[4] ? crc_bits[3] : lastb_c[crc_lane]" "ins[4] ? crc_bits[3] : 1'b0"
-run "IN doesn't record the bit for CRC" $E "if (is_in || is_inb) lastb[c] <= grp_in;" ";"
-run "OUT doesn't record the bit for CRC" $E "if (is_out || is_outb) lastb[c] <= grp_out;" ";"
+run "IN doesn't record the bit for CRC" $E "if ((is_in || is_inb) && !rep) lastb[c] <= grp_in;" ";"
+run "OUT doesn't record the bit for CRC" $E "if ((is_out || is_outb) && !rep) lastb[c] <= grp_out;" ";"
 run "contexts share a polynomial" $E "wire [15:0] poly_c   = poly[c];" "wire [15:0] poly_c   = poly[0];"
 run "TPHASE R1 cut to 14 bits" $E "default: tcnt[c] <= {1'b0, rr[{c, 2'd1}]};" "default: tcnt[c] <= {3'd0, rr[{c, 2'd1}][13:0]};"
 run "tcap: TCAP.t reads the interval before its tick" $E "wire [15:0] tint_now = tick_now[c] ? since_inc : tint[c];" "wire [15:0] tint_now = tint[c];"

@@ -79,13 +79,16 @@ Real problems, and which check found them. This is the best evidence that the ch
 
 ## Known gaps
 
-- **Timing.** At 50 MHz the last measured build fails setup by 6.08 ns at the slow corner (1.08 V, 125 °C), on 180
-  paths, all from the program SRAM. It passes at typical (+3.73 ns) and fast (+8.57 ns). Hold passes everywhere.
-- **Slew, cap and fanout.** That build reports 19, 26 and 85 violations.
+- **Timing.** At 50 MHz, `main` (v2.1 with `SUB`, `CMPUI` and `CMPK`, gds 44918283875) meets setup with 1.68 ns
+  of slack at the slow corner (1.08 V, 125 °C) and hold with 0.295 ns. The worst setup path runs from the
+  program SRAM's read data, through decode, to the next fetch address.
+- **Slew, cap and fanout.** That build has 0 cap and 0 fanout violations, and 1 slew violation at the slow
+  corner: the capture SRAM's write enable `cap_sram/A_WEN`, 0.634 ns against the pin's 0.595 ns limit.
 - **No silicon or pad data.** CMOS5L has neither yet, so pad delays and thresholds are unknowns in everything above.
 - **No board run.** The host CLI and RP2350 agent have only run against RTL replay and stand-ins.
-- **The model doesn't run protocol firmware.** The differential uses random programs, and protocol programs run on
-  RTL only.
+- **Protocol firmware isn't compared cycle by cycle.** The model runs any program (`python -m splice.run`), but
+  the every-pin, every-cycle comparison with the RTL uses random programs. Protocol programs are judged on the
+  RTL by decoders on the pins.
 - **Not formally proved:** instruction cycle counts and pass-through identity. Both have simulation evidence only.
 - **Local gate-level runs need patched cell models**, because Icarus 12 doesn't drive `$setuphold` delayed nets. CI
   uses Icarus 13 with the standard models, and CI's result is the one that counts.
@@ -93,6 +96,7 @@ Real problems, and which check found them. This is the best evidence that the ch
 ## Running everything
 
 ```sh
+source .venv/bin/activate      # first: make, cocotb and mutate.sh all expect the venv's python on PATH
 cd test && make && python -m cocotb_tools.check_results results.xml    # RTL suite, about 3 minutes
 cd formal && ./run.sh                                                  # proofs, about 1 minute
 cd model && python3 -m tests.test_asm
