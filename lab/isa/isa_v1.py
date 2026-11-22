@@ -38,6 +38,10 @@ EXTENSIONS = {
     "LDP": ("11101101", {"d": 2, "s": 2}),    # table read: Rd = program word at address Rs
     "JMPR": ("11101110", {"s": 3}),           # computed jump to an operand
     "LANES": ("11101111", {"w": 2}),          # OUT/IN/OUTB/INB move 1, 2, 4 or 8 lines at once
+    # v2.1, from trial 2's top gap: range checks against constants
+    "SUB": ("11101100", {"d": 2, "s": 3}),    # Rd -= operand, F = borrow. ROUTE's old code
+    "CMPK": ("11110000", {"a": 3}),           # unsigned compare with the next program word (2 slots)
+    "CMPUI": ("11111", {"a": 2, "v": 9}),     # unsigned compare with a 9-bit constant (1 word)
 }
 
 # Listed in the order the map should read: frequent, wide formats first.

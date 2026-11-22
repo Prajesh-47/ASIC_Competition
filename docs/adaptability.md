@@ -150,7 +150,8 @@ On v1 that would have been two chips.
 **What still got in the way** made firmware longer, not impossible. The top of the list, by how many of the
 four protocols each hurt:
 
-1. No compare or subtract against a 16-bit constant: every range check is 6 to 8 words (3 of 4).
+1. No compare or subtract against a 16-bit constant: every range check is 6 to 8 words (3 of 4). *v2.1 adds
+   `CMPUI`, `CMPK` and `SUB`; see below.*
 2. Four registers: `TO` gets borrowed as a fifth (2 of 4).
 3. `CALL` is one level, and the assembler didn't say so (2 of 4). *The assembler now warns.*
 4. Timing constants depend on how many contexts run (2 of 4).
@@ -159,6 +160,15 @@ four protocols each hurt:
 
 It also found a bug in the golden model, not the chip: `LDP`'s address was 8 bits there and 9 in the RTL. Fixed,
 with a test.
+
+### Since the second trial
+
+Measured on copies of the trial's firmware in `model/firmware/v21/` (the trial's own files are unchanged), run
+through the same trial tests on RTL with `SPLICE_FW=v21`.
+
+| Change | Gap it closes | Measured |
+|---|---|---|
+| **`SUB d, s`**, **`CMPUI r, k9`** and **`CMPK a, k16`** (branch `exp/v21-cmpk-sub`): a subtract that sets `F` on a borrow, and unsigned compares against a constant in the instruction (one word) or in the next word (two) | No compare or subtract against a constant (gap 1) | **NEC receive** 158 to 139 words, every range check one word and one slot shorter; **DCC receive** 81 to 77; **NEC transmit** and **BiSS-C** one word each, from `SUB`. 410 words against 435 over the four. Trial 2 suite 17/17 on RTL, as on the original firmware. **Finding:** `CMPK` alone, the first design, saved only 6 words: most constants are under 256, where `ldi` already takes one word, so `ldi / cmpu` and `cmpk` were the same size and speed. The one-word `CMPUI` is what pays. **Cost** (gds 44918283875 against main's 43792479139): standard-cell area +4.0% (381,786 to 397,172 µm²); setup slack at the slow corner 1.68 ns, from 1.59; hold 0.295 ns, from 0.297; no fanout violations, from 4; DRC, LVS and antenna clean; **one max-slew violation** at the slow corner on the capture SRAM's `A_WEN` (0.634 against a 0.595 limit), the pin that failed slew in the 8x4 move, from a placement change rather than the new logic |
 
 ## Next
 

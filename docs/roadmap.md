@@ -79,7 +79,7 @@ would shorten, with its gds cost, and adopted only if it pays. The author gave t
 
 | Gap | Hurt | Candidate | Silicon? |
 |---|---:|---|---|
-| No compare or subtract against a 16-bit constant: every range check is 6-8 words | 3 of 4 | `SUB`, and a compare whose constant is the next program word | Yes |
+| No compare or subtract against a 16-bit constant: every range check is 6-8 words | 3 of 4 | **Built** on `exp/v21-cmpk-sub`: `SUB`, `CMPUI` (9-bit constant, one word) and `CMPK` (16-bit constant in the next word). NEC receive 158 to 139 words, +4.0% area, setup 1.68 ns. Awaiting merge | Yes |
 | Four registers; `TO` borrowed as a fifth | 2 of 4 | More registers per context, or `TO` as a named general register when no wait is timed | Yes |
 | `TCAP` saturates at 1.31 ms | 2 of 4 | A prescaler field on the capture counter | Yes |
 | `CALL` is one level | 2 of 4 | A second return address per context | Yes |
