@@ -44,6 +44,10 @@
   "//": "on main (gds run 42515083991) were clkbuf_leaf_*. 7 leaves room for one dummy load per leaf.",
   "CTS_SINK_CLUSTERING_SIZE": 7,
 
+  "//": "Splice.WenBuffer puts a buf_4 on cap_sram/A_WEN after synthesis (flow/splice_wen_buffer.py).",
+  "//": "Keep the resizer from shrinking or removing it.",
+  "RSZ_DONT_TOUCH_LIST": ["cap_wen_buf"],
+
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
   "//": "The value is in nanoseconds, so 20ns == 50MHz.",
   "CLOCK_PERIOD": 20,
@@ -71,6 +75,7 @@
   "meta": {
     "flow": "Classic",
     "substituting_steps": {
+      "+OpenROAD.Floorplan": "Splice.WenBuffer",
       "+OpenROAD.GeneratePDN": "Splice.PowerColumns",
       "+Splice.PowerColumns": "Splice.CheckPowerGrid"
     }

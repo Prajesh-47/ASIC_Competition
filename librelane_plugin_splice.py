@@ -25,6 +25,15 @@ class PowerColumns(OdbpyStep):
 
 
 @Step.factory.register()
+class WenBuffer(OdbpyStep):
+    id = "Splice.WenBuffer"
+    name = "Buffer the Capture SRAM's Write Enable"
+
+    def get_script_path(self):
+        return os.path.join(HERE, "flow", "splice_wen_buffer.py")
+
+
+@Step.factory.register()
 class CheckPowerGrid(OpenROADStep):
     """Recheck the power grid once the macro columns exist.
 
