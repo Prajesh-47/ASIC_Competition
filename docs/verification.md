@@ -83,7 +83,9 @@ Real problems, and which check found them. This is the best evidence that the ch
   of slack at the slow corner (1.08 V, 125 °C) and hold with 0.295 ns. The worst setup path runs from the
   program SRAM's read data, through decode, to the next fetch address.
 - **Slew, cap and fanout.** That build has 0 cap and 0 fanout violations, and 1 slew violation at the slow
-  corner: the capture SRAM's write enable `cap_sram/A_WEN`, 0.634 ns against the pin's 0.595 ns limit.
+  corner: the capture SRAM's write enable `cap_sram/A_WEN`, 0.634 ns against the pin's 0.595 ns limit. Four fixes were
+  tried (`ai-log.md`, 2026-11-23); each one-cell change moved setup by 1-2 ns, so it is left for signoff on the
+  frozen RTL.
 - **No silicon or pad data.** CMOS5L has neither yet, so pad delays and thresholds are unknowns in everything above.
 - **No board run.** The host CLI and RP2350 agent have only run against RTL replay and stand-ins.
 - **Protocol firmware isn't compared cycle by cycle.** The model runs any program (`python -m splice.run`), but
