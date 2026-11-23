@@ -372,11 +372,23 @@ module tt_um_prajesh47_splice (
       .A_BIST_BM  (16'd0)
   );
 
+  // The capture SRAM's write enable is a long route to a macro pin, and the router's estimate before
+  // detailed routing can't see the macro end of it, so the resizer left it on its weakest gate and it
+  // missed the pin's slew limit at the slow corner (gds 44918283875: 0.634 ns against 0.595). A fixed
+  // buf_4 drives it instead; config.json marks it don't-touch so the resizer can't shrink it back.
+  wire cap_wen = cap_we || (host_cap && mem_we);
+  wire cap_wen_pin;
+`ifdef SYNTHESIS
+  sg13cmos5l_buf_4 cap_wen_buf (.A(cap_wen), .X(cap_wen_pin));
+`else
+  assign cap_wen_pin = cap_wen;
+`endif
+
   // The capture unit has priority. The host can read results once capture has stopped.
   RM_IHPSG13_1P_512x16_c2_bm_bist cap_sram (
       .A_CLK      (clk),
       .A_MEN      (cap_we || host_cap),
-      .A_WEN      (cap_we || (host_cap && mem_we)),
+      .A_WEN      (cap_wen_pin),
       .A_REN      (host_cap && !mem_we),
       .A_ADDR     (cap_we ? cap_waddr : mem_addr),
       .A_DIN      (cap_we ? cap_wdata : mem_wdata),

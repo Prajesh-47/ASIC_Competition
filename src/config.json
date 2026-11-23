@@ -44,6 +44,9 @@
   "//": "on main (gds run 42515083991) were clkbuf_leaf_*. 7 leaves room for one dummy load per leaf.",
   "CTS_SINK_CLUSTERING_SIZE": 7,
 
+  "//": "Keep the fixed buffer on the capture SRAM's write enable (see tt_um_prajesh47_splice.v).",
+  "RSZ_DONT_TOUCH_LIST": ["cap_wen_buf"],
+
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
   "//": "The value is in nanoseconds, so 20ns == 50MHz.",
   "CLOCK_PERIOD": 20,
