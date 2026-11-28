@@ -30,7 +30,7 @@ Ranked by what they do for judging (flexibility first, then the write-up, which 
 | **4** | **10 Mbit Ethernet transmit as firmware,** clocked at 60 MHz (or 40 MHz). It's one of the two stretch goals the organisers name | Measured here on the golden model: `CODE man` holds exact half-bits of **3 cycles (50 ns at 60 MHz)** across back-to-back FIFO words, with 0 wrong cycles in 576. At 2 cycles (40 MHz) a naive loop is 1 cycle late at 2 of 5 word boundaries. Two entrants already claim 10BASE-T, so SPLICE lacks one of the named stretch goals. Firmware only, and the FAQ allows 60 MHz. The catch is timing: setup closes at 50 MHz with 1.68 ns to spare, which leaves about −1.6 ns at 60 MHz in the slow corner | Probe done. A frame with preamble, SFD, CRC-32 and link pulses: 1–2 days. A 60 MHz gds run: 1 run | [5](#5-firmware-capabilities-not-yet-shown), [6](#6-re-hardening-after-the-deadline) |
 | **5** | **Turn trial 3 into the "new protocol from a blank file" tutorial,** timed per protocol, as the roadmap already plans. Lead the README with its numbers | Answers the main criterion directly. Escapement also ran a sealed, hashed held-out round, so the sealing alone isn't unique any more. The time to the first working frame is what would set ours apart | Already scheduled (week 3) | [3](#3-how-other-entries-present-themselves), [4](#4-demos-that-need-no-board) |
 | 6 | **A "bus fuzzer" demo:** inline fault injection at a position chosen by `RAND` or swept, and a log of how the target device reacts | A firmware capability no entrant's README describes, built only from interposing and the LFSR. It makes "alter traffic" read as a test tool rather than a party trick | 1–2 days | [5](#5-firmware-capabilities-not-yet-shown) |
-| 7 | **Decide on the FPGA question plainly:** either drop the FPGA badge, or state "synthesises for iCE40UP5K, doesn't fit (118% of LUTs)". Hardware evidence would need a larger FPGA board | At least four entrants show their RTL on an FPGA board. SPLICE has none, and a red badge in the first line of the README makes that look worse | Minutes (badge). A board is the author's call (cost) | [2](#2-the-fpga-build) |
+| 7 | **Decide on the FPGA question plainly:** either drop the FPGA badge, or state "synthesises for iCE40UP5K, doesn't fit (157% of logic cells after packing)". Hardware evidence would need a larger FPGA board | At least five entrants show their RTL on an FPGA board. SPLICE has none, and a red badge in the first line of the README makes that look worse | Minutes (badge). A board is the author's call (cost) | [2](#2-the-fpga-build) |
 | 8 | **Make any silicon decision before submission.** The FAQ allows only *non-functional* fixes after the deadline, so the boot store (still awaiting a choice) or any other feature has to go in by 2027-01-18, not later | Avoids planning around a re-hardening window that won't take features | A decision | [6](#6-re-hardening-after-the-deadline) |
 
 ---
@@ -74,7 +74,7 @@ and `src/config.json` sets no defines. The `__librelane__` guard covers us if a 
 |---|---|
 | ASIC-style synthesis before and after, two ways (yosys 0.33): `gl_yosys.sh`'s recipe with the macro read as `-lib`, and LibreLane's way with the macro file among the sources and `-D__librelane__ -D__pnr__ -DPDK_ihp_sg13cmos5l` | **15,258 cells and 2 macro instances both times. The written netlists are byte-identical** (same MD5 before and after, `a796b45a…`) |
 | RTL suite, `cd test && make`, then `python -m cocotb_tools.check_results results.xml` | **77/77 pass**, `check_results` exit 0 (7 min 15 s) |
-| FPGA synthesis, the exact `tt_fpga.py` command (yosys 0.33, `synth_ice40`) | Synthesises. The macros become **4 `SB_RAM40_4K`** (2 per macro, of 30) |
+| FPGA synthesis, the exact `tt_fpga.py` command (yosys 0.33, `synth_ice40`) | Synthesises. The macros become **4 `SB_RAM40_4K`** (2 per macro, of 30). CI run 46161382738 synthesises too, then fails at placement (below) |
 
 ### Does it fit an iCE40UP5K? **No.**
 
@@ -85,8 +85,12 @@ and `src/config.json` sets no defines. The `__librelane__` guard covers us if a 
 | `SB_CARRY` | 520 | (in the same logic cells) | |
 | Block RAM (4 Kbit) | 4 | 30 | 13% |
 
-Synthesis estimate from yosys 0.33. The CI's oss-cad-suite is newer and nextpnr packs differently, but
-not by 18%. By module (`-noflatten`), the engine is 4,856 of the LUTs. Its per-context state is muxed out of
+That table is the local synthesis estimate from yosys 0.33. **The CI run is worse**
+([run 46161382738](https://github.com/Prajesh-47/ASIC_Competition/actions/runs/46161382738)): yosys 0.71
+gives 6,561 `SB_LUT4` (124%). nextpnr then packs LUTs, flip-flops and carries into **8,341 of 5,280 logic
+cells (157%)**, and fails with "Unable to place cell … no BELs remaining to implement cell type
+'ICESTORM_LC'". Block RAM is 4 of 30 and I/O 26 of 39. Synthesis now passes, so the macro error is gone. The
+design is simply too big. By module (`-noflatten`, local), the engine is 4,856 of the LUTs. Its per-context state is muxed out of
 flip-flops, and iCE40 has no distributed RAM to hold it.
 
 **Alternative, not built:** the engine is already `splice_engine #(parameter NCTX = 4)`. Setting `NCTX` with
@@ -95,8 +99,8 @@ flip-flops, and iCE40 has no distributed RAM to hold it.
 | `NCTX` | LUT4 | Use of 5,280 |
 |---:|---:|---:|
 | 4 | 6,222 | 118% |
-| 2 | 4,789 | 91%, likely too full to place and route at the demo board's clock |
-| 1 | 3,932 | 74% |
+| 2 | 4,789 | 91% of LUTs. Packed, about 120% of logic cells if CI's ratio holds (8,341 cells for 6,222 local LUTs): **doesn't fit** |
+| 1 | 3,932 | 74% of LUTs. Packed, about 100%: **borderline at best** |
 
 An FPGA-only `NCTX` would need an RTL change: the top level wires `halted` and the context-count register
 as 4 contexts, and `NCTX` below 4 has never been tested. That's against the freeze, and an FPGA build that
@@ -107,8 +111,10 @@ action). That's the author's call, since it means buying a board.
 
 ### Workflow run
 
-One push and one dispatch of `fpga.yaml` on this branch. Its result is in the commit after this one, or
-in the hand-off. The expected result is that synthesis passes and nextpnr fails on LUT count.
+One dispatch of `fpga.yaml` on this branch at 1362522,
+[run 46161382738](https://github.com/Prajesh-47/ASIC_Competition/actions/runs/46161382738): **failure, as
+expected, at placement.** Synthesis passed with 4 `SB_RAM40_4K`, so the macro problem is fixed. nextpnr found
+157% of the UP5K's logic cells needed. The workflow can't go green on this device with the full design.
 
 ---
 
